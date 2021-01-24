@@ -94,6 +94,8 @@ def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tu
     T = np.pad(T, [(0, 3), (0, 0)])
     T, loss = irls(A, Y, weights, T, loss)
 
+    T.flags.writeable = False
+
     return T, loss
 
 
@@ -140,7 +142,7 @@ def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarra
     weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
 
-    best_idx = np.argmax(losses)
+    best_idx = np.argmin(losses)
     return Ts[best_idx], losses[best_idx].item()
 
 
@@ -199,12 +201,12 @@ def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T)
         T_expanded = np.identity(6, dtype=T.dtype)
         T_expanded[:6, :2] = T
         T = np.roll(np.linalg.inv(T_expanded)[:, :2], 1, axis=0)
+        T *= image_max_size
 
         grid = np.mgrid[:template_width, :template_height].astype(np.float32) / template_max_size  # [2, w, h]
         grid = grid.transpose(2, 1, 0)  # [h, w, 2]
         grid = poly_expand(grid, 2)
 
         dest_grid = grid @ T  # [h, w, 2]
-        dest_grid *= image_max_size
 
         return cv2.remap(image, dest_grid[..., 0], dest_grid[..., 1], cv2.INTER_AREA)
