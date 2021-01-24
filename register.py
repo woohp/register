@@ -51,7 +51,6 @@ def do_match(
     descriptors2: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     distances = _ext.hamming_distance_matrix(descriptors1, descriptors2)
-    breakpoint()
 
     x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]
     y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]
@@ -88,12 +87,10 @@ def do_match(
 def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarray, float]:
     A = poly_expand(X, 2)
 
-    breakpoint()
     T, loss = ransac(A[:, :3], Y, weights)
     T, loss = irls(A[:, :3], Y, weights, T, loss)
 
     # expand transformation to quadratic, and repeat the IRLS step
-    breakpoint()
     T = np.pad(T, [(0, 3), (0, 0)])
     T, loss = irls(A, Y, weights, T, loss)
 
@@ -101,17 +98,18 @@ def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tu
 
 
 def poly_expand(X: np.ndarray, d: int):
-    o = np.ones(X.shape[0], dtype=X.dtype)
 
     if d == 1:
-        return np.column_stack((o, X))
-    elif d == 2:
-        x = X[:, 0]
-        y = X[:, 1]
+        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
+
+    o = np.ones((*X.shape[:-1], 1), dtype=X.dtype)
+
+    if d == 2:
+        x, y = np.split(X, 2, axis=-1)
         xx = np.square(x)
         yy = np.square(y)
         xy = x * y
-        return np.column_stack((o, X, xx, xy, yy))
+        return np.concatenate((o, X, xx, xy, yy), axis=-1)
     else:
         raise NotImplementedError
 
@@ -202,12 +200,11 @@ def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T)
         T_expanded[:6, :2] = T
         T = np.roll(np.linalg.inv(T_expanded)[:, :2], 1, axis=0)
 
-        grid = np.mgrid[:template_height, :template_width].astype(np.float32) / template_max_size
-        grid = grid.transpose(2, 1, 0)
-        grid = grid.reshape(-1, 2)
+        grid = np.mgrid[:template_width, :template_height].astype(np.float32) / template_max_size  # [2, w, h]
+        grid = grid.transpose(2, 1, 0)  # [h, w, 2]
         grid = poly_expand(grid, 2)
 
-        dest_grid = (grid @ T).reshape(template_width, template_height, 2)
+        dest_grid = grid @ T  # [h, w, 2]
         dest_grid *= image_max_size
 
         return cv2.remap(image, dest_grid[..., 0], dest_grid[..., 1], cv2.INTER_AREA)
