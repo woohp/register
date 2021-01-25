@@ -122,8 +122,7 @@ def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarray, float]:
-    rng = random.Random(4321)
-    samples = get_random_samples(A.shape[0], 3, N_ITERS_RANSAC, rng)
+    samples = get_random_samples(A.shape[0], 3, N_ITERS_RANSAC, random.Random(4321))
 
     b_A = A[samples]  # [batch-size, 3, features]
     b_Y = Y[samples]  # [batch-size, 3, 2]
@@ -194,6 +193,7 @@ def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T)
         return cv2.warpAffine(image, T, tuple(reversed(template_shape)), cv2.INTER_AREA, cv2.BORDER_CONSTANT, 0)
 
     elif T.shape == (6, 2):
+        # If this is a quadratic transformation, use cv2.remap
         T = np.roll(T, -1, axis=0)
         T_expanded = np.identity(6, dtype=T.dtype)
         T_expanded[:6, :2] = T
