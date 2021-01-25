@@ -1,8 +1,9 @@
 import cv2
 import numpy as np
+import random
 from utils.sampling import get_random_samples
 import _ext
-from typing import List, Tuple
+from typing import Tuple
 
 
 TARGET_MAX_SIZE = 1_200
@@ -121,14 +122,10 @@ def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
 
 
 def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarray, float]:
-    samples: List[Tuple[int, int, int]] = []
-    for i in range(N_ITERS_RANSAC):
-        sample = get_random_samples(i, A.shape[0])
-        if sample is None:
-            break
-        samples.append(sample)
+    rng = random.Random(4321)
+    samples = get_random_samples(A.shape[0], 3, N_ITERS_RANSAC, rng)
 
-    b_A = A[samples]  # [batch-size, 3, 3]
+    b_A = A[samples]  # [batch-size, 3, features]
     b_Y = Y[samples]  # [batch-size, 3, 2]
 
     # solve regularized least squares
