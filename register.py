@@ -85,14 +85,15 @@ def do_match(
 
 
 def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
-    A = poly_expand(X, 2)
+    # A = poly_expand(X, 2)
+    A = perspective_expand(X, Y)
 
-    T, loss = ransac(A[:, :3], Y, weights)
+    T, loss = ransac(A[:, :9], Y, weights)
     T, loss = irls(A[:, :3], Y, weights, T, loss)
 
     # expand transformation to quadratic, and repeat the IRLS step
-    T = np.pad(T, [(0, 3), (0, 0)])
-    T, loss = irls(A, Y, weights, T, loss)
+    # T = np.pad(T, [(0, 3), (0, 0)])
+    # T, loss = irls(A, Y, weights, T, loss)
 
     T.flags.writeable = False
 
@@ -116,23 +117,43 @@ def poly_expand(X: np.ndarray, d: int):
         raise NotImplementedError
 
 
+def perspective_expand(X: np.ndarray, Y: np.ndarray):
+    N = X.shape[0]
+    ones = np.ones((N, 1), dtype=X.dtype)
+    zeros = np.zeros((N, 3), dtype=X.dtype)
+    row1 = np.concatenate((X, ones, zeros, -X * Y[:, :1], -Y[:, :1]), axis=-1)
+    row2 = np.concatenate((zeros, X, ones, -X * Y[:, 1:], -Y[:, 1:]), axis=-1)
+    return np.stack((row1, row2), axis=1)
+
+
 def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
     return d / (d + sigma)
 
 
 def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
-    samples = get_random_samples(A.shape[0], 3, N_ITERS_RANSAC, random.Random(4321))
+    samples = get_random_samples(A.shape[0], 4, N_ITERS_RANSAC, random.Random(4321))
 
-    b_A = A[samples]  # [batch-size, 3, features]
-    b_Y = Y[samples]  # [batch-size, 3, 2]
+    b_A = A[samples]  # [batch-size, 4, 2, features]
+    b_A = b_A.reshape(-1, 8, 9)
+    # b_Y = Y[samples]  # [batch-size, 3, 2]
 
     # solve regularized least squares
     # https://stackoverflow.com/questions/27476933/numpy-linear-regression-with-regularization
-    b_A_T = b_A.swapaxes(1, 2)
-    Ts = np.linalg.solve(b_A_T @ b_A + RANSAC_L2_REGULARIZATION * np.identity(3, dtype=b_A.dtype), b_A_T @ b_Y)
+    # b_A_T = b_A.swapaxes(1, 2)
+    # Ts = np.linalg.solve(b_A_T @ b_A + RANSAC_L2_REGULARIZATION * np.identity(3, dtype=b_A.dtype), b_A_T @ b_Y)
+    # Ts = np.linalg.solve(b_A_T @ b_A, b_A_T @ b_Y)
+    # breakpoint()
+    # Ts = Ts.reshape(-1, 3, 3)
+    _, _, V = np.linalg.svd(b_A)
+    Ts = V[:, -1].reshape(-1, 3, 3)
+    Ts /= Ts[:, -1:, -1:]
+    Ts = Ts.swapaxes(1, 2)
 
     # compute losses
-    distances = ((A @ Ts - Y)**2).sum(axis=-1)
+    Y_hat = A[:, 0, :3] @ Ts
+    Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
+    Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
+    distances = ((Y_hat - Y)**2).sum(axis=-1)
     objective_losses = (geman_mcclure_loss(distances, SIGMA) * weights).sum(axis=-1) / weights.sum()
     weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
@@ -148,10 +169,14 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
     last_full_loss = initial_loss
 
     for iter_idx in range(N_ITERS_IRLS):
-        distances = ((A @ T - Y)**2).sum(axis=-1)
+        print(T.shape)
+        Y_hat = A[:, 0, :3] @ T
+        Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
+        Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
+        distances = ((Y_hat - Y)**2).sum(axis=-1)
         w = weights / (distances + SIGMA)
-        WA = A * w[:, np.newaxis]
-        WY = Y * w[:, np.newaxis]
+        WA = A * w[:, np.newaxis, np.newaxis]
+        # WY = Y * w[:, np.newaxis, np.newaxis]
         objective_loss = (w * distances).sum() / weights.sum()
 
         full_loss = objective_loss
@@ -171,7 +196,11 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
         if iter_idx == N_ITERS_IRLS - 1:
             break
 
-        T = np.linalg.lstsq(WA, WY, rcond=None)[0]
+        _, _, V = np.linalg.svd(WA.reshape(-1, 9))
+        T = V[-1].reshape(3, 3)
+        T /= T[-1:, -1:]
+        T = T.swapaxes(0, 1)
+        # T = np.linalg.lstsq(WA, WY, rcond=None)[0]
 
     return T, last_objective_loss
 
@@ -204,3 +233,16 @@ def generate_warped_image(image: np.ndarray, template_shape: tuple[int, int], T)
         dest_grid = _ext.generate_quadratic_remap_maps(*template_shape, T)
 
         return cv2.remap(image, *dest_grid, cv2.INTER_AREA)
+
+    elif T.shape == (3, 3):
+        T = np.linalg.inv(T)
+
+        grid = np.mgrid[:template_width, :template_height].astype(np.float32) / template_max_size  # [2, w, h]
+        grid = grid.transpose(2, 1, 0)  # [h, w, 2]
+
+        dest_grid = grid @ T[:2] + T[-1:]
+        dest_grid[dest_grid == 0] == np.finfo(dest_grid.dtype).eps
+        dest_grid = dest_grid[..., :-1] / dest_grid[..., -1:]
+        dest_grid *= image_max_size
+
+        return cv2.remap(image, dest_grid[..., 0], dest_grid[..., 1], cv2.INTER_AREA)
