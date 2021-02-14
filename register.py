@@ -199,8 +199,10 @@ def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T)
         T_expanded[:6, :2] = T
         T = np.roll(np.linalg.inv(T_expanded)[:, :2], 1, axis=0)
         T *= image_max_size
+        T[1:] /= template_max_size
+        T[3:] /= template_max_size
 
-        grid = np.mgrid[:template_width, :template_height].astype(np.float32) / template_max_size  # [2, w, h]
+        grid = np.mgrid[:template_width, :template_height].astype(np.float32)  # [2, w, h]
         grid = grid.transpose(2, 1, 0)  # [h, w, 2]
         grid = poly_expand(grid, 2)
 
