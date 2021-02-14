@@ -169,7 +169,6 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
     last_full_loss = initial_loss
 
     for iter_idx in range(N_ITERS_IRLS):
-        print(T.shape)
         Y_hat = A[:, 0, :3] @ T
         Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
         Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
@@ -218,7 +217,7 @@ def generate_warped_image(image: np.ndarray, template_shape: tuple[int, int], T)
         T[1:] *= template_max_size / image_max_size
         T = np.roll(T, -1, axis=0).T
 
-        return cv2.warpAffine(image, T, tuple(reversed(template_shape)), cv2.INTER_AREA, cv2.BORDER_CONSTANT, 0)
+        return cv2.warpAffine(image, T, tuple(reversed(template_shape)), cv2.INTER_AREA)
 
     elif T.shape == (6, 2):
         # If this is a quadratic transformation, use cv2.remap
@@ -235,14 +234,10 @@ def generate_warped_image(image: np.ndarray, template_shape: tuple[int, int], T)
         return cv2.remap(image, *dest_grid, cv2.INTER_AREA)
 
     elif T.shape == (3, 3):
-        T = np.linalg.inv(T)
+        # massage the transformation matrix a bit
+        T = T.copy()
+        T[:2] *= image_max_size / template_max_size
+        T[2] *= image_max_size
+        T[:, -1] /= template_max_size
 
-        grid = np.mgrid[:template_width, :template_height].astype(np.float32) / template_max_size  # [2, w, h]
-        grid = grid.transpose(2, 1, 0)  # [h, w, 2]
-
-        dest_grid = grid @ T[:2] + T[-1:]
-        dest_grid[dest_grid == 0] == np.finfo(dest_grid.dtype).eps
-        dest_grid = dest_grid[..., :-1] / dest_grid[..., -1:]
-        dest_grid *= image_max_size
-
-        return cv2.remap(image, dest_grid[..., 0], dest_grid[..., 1], cv2.INTER_AREA)
+        return cv2.warpPerspective(image, T.T, tuple(reversed(template_shape)), cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
