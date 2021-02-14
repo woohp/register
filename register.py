@@ -202,10 +202,6 @@ def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T)
         T[1:] /= template_max_size
         T[3:] /= template_max_size
 
-        grid = np.mgrid[:template_width, :template_height].astype(np.float32)  # [2, w, h]
-        grid = grid.transpose(2, 1, 0)  # [h, w, 2]
-        grid = poly_expand(grid, 2)
+        dest_grid = _ext.generate_quadratic_remap_maps(*template_shape, T)
 
-        dest_grid = grid @ T  # [h, w, 2]
-
-        return cv2.remap(image, dest_grid[..., 0], dest_grid[..., 1], cv2.INTER_AREA)
+        return cv2.remap(image, *dest_grid, cv2.INTER_AREA)

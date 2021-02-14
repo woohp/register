@@ -3,6 +3,7 @@
 
 namespace py = pybind11;
 using namespace pybind11::literals;
+using pybind11::array_t;
 
 int hamming_distance(const uint64_t* const x, const uint64_t* const y)
 {
@@ -42,12 +43,12 @@ int hamming_distance(const uint64_t* const x, const uint64_t* const y)
     return static_cast<int>(count[0] + count[1] + count[2] + count[3]);
 }
 
-py::array_t<uint16_t> hamming_distance_matrix(py::array_t<uint8_t> X, py::array_t<uint8_t> Y)
+array_t<uint16_t> hamming_distance_matrix(array_t<uint8_t> X, array_t<uint8_t> Y)
 {
     auto X_a = X.unchecked<2>();
     auto Y_a = Y.unchecked<2>();
 
-    auto result = py::array_t<uint16_t>({ X_a.shape(0), Y_a.shape(0) });
+    auto result = array_t<uint16_t>({ X_a.shape(0), Y_a.shape(0) });
     auto result_a = result.mutable_unchecked<2>();
 
     for (py::ssize_t i = 0; i < X_a.shape(0); i++)
@@ -62,9 +63,39 @@ py::array_t<uint16_t> hamming_distance_matrix(py::array_t<uint8_t> X, py::array_
     return result;
 }
 
+std::pair<array_t<float>, array_t<float>> generate_quadratic_remap_maps(int height, int width, array_t<float> T)
+{
+    array_t<float> map_x({ height, width });
+    array_t<float> map_y({ height, width });
+
+    // create the accessor objects
+    auto T_a = T.unchecked<2>();
+    auto map_x_a = map_x.mutable_unchecked<2>();
+    auto map_y_a = map_y.mutable_unchecked<2>();
+
+    for (int y = 0; y < height; y++)
+    {
+        const float yy = y * y;
+
+        for (int x = 0; x < width; x++)
+        {
+            const auto xx = x * x;
+            const auto xy = x * y;
+
+            map_x_a(y, x)
+                = (T_a(0, 0) + T_a(1, 0) * x + T_a(2, 0) * y + T_a(3, 0) * xx + T_a(4, 0) * xy + T_a(5, 0) * yy);
+            map_y_a(y, x)
+                = (T_a(0, 1) + T_a(1, 1) * x + T_a(2, 1) * y + T_a(3, 1) * xx + T_a(4, 1) * xy + T_a(5, 1) * yy);
+        }
+    }
+
+    return { map_x, map_y };
+}
+
 PYBIND11_MODULE(_ext, m)
 {
     m.doc() = "Hamming Distance Matrix";
 
     m.def("hamming_distance_matrix", &hamming_distance_matrix, "", "X"_a, "Y"_a);
+    m.def("generate_quadratic_remap_maps", &generate_quadratic_remap_maps, "", "height"_a, "width"_a, "T"_a);
 }
