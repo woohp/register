@@ -3,7 +3,6 @@ import numpy as np
 import random
 from utils.sampling import get_random_samples
 import _ext
-from typing import Tuple
 
 
 TARGET_MAX_SIZE = 1_200
@@ -36,7 +35,7 @@ def aspect_aware_resize(image: np.ndarray, max_size: float) -> np.ndarray:
     return cv2.resize(image, (0, 0), None, ratio, ratio, interpolation)
 
 
-def detect_features(image: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def detect_features(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     brisk = cv2.BRISK.create(None, 5)
     keypoints = brisk.detect(image)
     keypoints.sort(key=lambda kp: kp.response, reverse=True)
@@ -50,7 +49,7 @@ def do_match(
     descriptors1: np.ndarray,
     keypoints2: np.ndarray,
     descriptors2: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     distances = _ext.hamming_distance_matrix(descriptors1, descriptors2)
 
     x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]
@@ -85,7 +84,7 @@ def do_match(
     return X, Y, weights
 
 
-def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarray, float]:
+def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
     A = poly_expand(X, 2)
 
     T, loss = ransac(A[:, :3], Y, weights)
@@ -121,7 +120,7 @@ def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
     return d / (d + sigma)
 
 
-def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarray, float]:
+def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
     samples = get_random_samples(A.shape[0], 3, N_ITERS_RANSAC, random.Random(4321))
 
     b_A = A[samples]  # [batch-size, 3, features]
@@ -143,7 +142,7 @@ def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> Tuple[np.ndarra
 
 
 def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
-         initial_loss: float) -> Tuple[np.ndarray, float]:
+         initial_loss: float) -> tuple[np.ndarray, float]:
     last_T = T
     last_objective_loss = initial_loss
     last_full_loss = initial_loss
@@ -177,7 +176,7 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
     return T, last_objective_loss
 
 
-def generate_warped_image(image: np.ndarray, template_shape: Tuple[int, int], T):
+def generate_warped_image(image: np.ndarray, template_shape: tuple[int, int], T):
     image_max_size: int = max(image.shape[:2])
     template_height, template_width = template_shape
     template_max_size: int = max(template_shape)

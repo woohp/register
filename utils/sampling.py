@@ -1,13 +1,12 @@
 import math
 from random import Random
-from typing import List
 
 
-def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> List[List[int]]:
+def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> list[list[int]]:
     n_combos = math.comb(N, k)
     n_samples = min(n_combos, max_samples)
 
-    out: List[List[int]] = []
+    out: list[list[int]] = []
     for i in range(n_samples):
         if n_combos < max_samples:
             idx = i
@@ -19,14 +18,14 @@ def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> List[Li
     return out
 
 
-def xord(k: int, sk: int) -> List[int]:
+def xord(k: int, sk: int) -> list[int]:
     """
     Inverse function of ``ordx``, given output tuple size and compressed index.
     """
     return [i + r for r, i in enumerate(sord(k, sk))]
 
 
-def sord(k: int, sk: int) -> List[int]:
+def sord(k: int, sk: int) -> list[int]:
     """
     Inverse function of ``ords``, given output tuple size and compressed index.
     """
