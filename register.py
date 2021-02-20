@@ -1,9 +1,9 @@
 import cv2
 import numpy as np
 import random
+from transforms import Transform, method_type
 from utils.sampling import get_random_samples
 import _ext
-
 
 TARGET_MAX_SIZE = 1_200
 N_ITERS_RANSAC = 4_000
@@ -12,7 +12,7 @@ SIGMA = 0.00003
 RANSAC_L2_REGULARIZATION = 0.005
 
 
-def register_image(image1: np.ndarray, image2: np.ndarray):
+def register_image(image1: np.ndarray, image2: np.ndarray, method: method_type = 'quadratic'):
     image1 = resize_and_blur(image1)
     image2 = resize_and_blur(image2)
 
@@ -20,7 +20,7 @@ def register_image(image1: np.ndarray, image2: np.ndarray):
     keypoints2, descriptors2 = detect_features(image2)
 
     X, Y, weights = do_match(keypoints1, descriptors1, keypoints2, descriptors2)
-    return find_transformation(X, Y, weights)
+    return find_transformation(X, Y, weights, Transform.get_transform(method))
 
 
 def resize_and_blur(image: np.ndarray) -> np.ndarray:
@@ -84,12 +84,14 @@ def do_match(
     return X, Y, weights
 
 
-def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
-    # A = poly_expand(X, 2)
-    A = perspective_expand(X, Y)
-
-    T, loss = ransac(A[:, :9], Y, weights)
-    T, loss = irls(A[:, :3], Y, weights, T, loss)
+def find_transformation(
+    X: np.ndarray,
+    Y: np.ndarray,
+    weights: np.ndarray,
+    transform: type[Transform],
+) -> tuple[np.ndarray, float]:
+    A = transform.expand(X, Y)
+    T, loss = ransac(A, Y, weights, transform)
 
     # expand transformation to quadratic, and repeat the IRLS step
     # T = np.pad(T, [(0, 3), (0, 0)])
@@ -100,59 +102,21 @@ def find_transformation(X: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tu
     return T, loss
 
 
-def poly_expand(X: np.ndarray, d: int):
-
-    if d == 1:
-        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
-
-    o = np.ones((*X.shape[:-1], 1), dtype=X.dtype)
-
-    if d == 2:
-        x, y = np.split(X, 2, axis=-1)
-        xx = np.square(x)
-        yy = np.square(y)
-        xy = x * y
-        return np.concatenate((o, X, xx, xy, yy), axis=-1)
-    else:
-        raise NotImplementedError
-
-
-def perspective_expand(X: np.ndarray, Y: np.ndarray):
-    N = X.shape[0]
-    ones = np.ones((N, 1), dtype=X.dtype)
-    zeros = np.zeros((N, 3), dtype=X.dtype)
-    row1 = np.concatenate((X, ones, zeros, -X * Y[:, :1], -Y[:, :1]), axis=-1)
-    row2 = np.concatenate((zeros, X, ones, -X * Y[:, 1:], -Y[:, 1:]), axis=-1)
-    return np.stack((row1, row2), axis=1)
-
-
 def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
     return d / (d + sigma)
 
 
-def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray) -> tuple[np.ndarray, float]:
+def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, transform: type[Transform]) -> tuple[np.ndarray, float]:
     samples = get_random_samples(A.shape[0], 4, N_ITERS_RANSAC, random.Random(4321))
 
-    b_A = A[samples]  # [batch-size, 4, 2, features]
-    b_A = b_A.reshape(-1, 8, 9)
-    # b_Y = Y[samples]  # [batch-size, 3, 2]
+    b_A = A[samples]  # [batch-size, ...]
+    # b_A = b_A.reshape(batch_size, -1, 9)
+    b_Y = Y[samples]  # [batch-size, samples, 2]
 
-    # solve regularized least squares
-    # https://stackoverflow.com/questions/27476933/numpy-linear-regression-with-regularization
-    # b_A_T = b_A.swapaxes(1, 2)
-    # Ts = np.linalg.solve(b_A_T @ b_A + RANSAC_L2_REGULARIZATION * np.identity(3, dtype=b_A.dtype), b_A_T @ b_Y)
-    # Ts = np.linalg.solve(b_A_T @ b_A, b_A_T @ b_Y)
-    # breakpoint()
-    # Ts = Ts.reshape(-1, 3, 3)
-    _, _, V = np.linalg.svd(b_A)
-    Ts = V[:, -1].reshape(-1, 3, 3)
-    Ts /= Ts[:, -1:, -1:]
-    Ts = Ts.swapaxes(1, 2)
+    Ts = transform.estimate(b_A, b_Y, RANSAC_L2_REGULARIZATION)
 
     # compute losses
-    Y_hat = A[:, 0, :3] @ Ts
-    Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
-    Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
+    Y_hat = transform.transform(A, Ts)
     distances = ((Y_hat - Y)**2).sum(axis=-1)
     objective_losses = (geman_mcclure_loss(distances, SIGMA) * weights).sum(axis=-1) / weights.sum()
     weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
