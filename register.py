@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from numpy import ndarray
 import random
 from transforms import Transform, method_type
 from utils.sampling import get_random_samples
@@ -12,7 +13,7 @@ SIGMA = 0.00003
 RANSAC_L2_REGULARIZATION = 0.005
 
 
-def register_image(image1: np.ndarray, image2: np.ndarray, method: method_type = 'quadratic'):
+def register_image(image1: ndarray, image2: ndarray, method: method_type = 'perspective'):
     image1 = resize_and_blur(image1)
     image2 = resize_and_blur(image2)
 
@@ -23,19 +24,19 @@ def register_image(image1: np.ndarray, image2: np.ndarray, method: method_type =
     return find_transformation(X, Y, weights, Transform.get_transform(method))
 
 
-def resize_and_blur(image: np.ndarray) -> np.ndarray:
+def resize_and_blur(image: ndarray) -> ndarray:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
     image = cv2.GaussianBlur(image, (3, 3), 2, 2)
     return image
 
 
-def aspect_aware_resize(image: np.ndarray, max_size: float) -> np.ndarray:
+def aspect_aware_resize(image: ndarray, max_size: float) -> ndarray:
     ratio = max_size / max(image.shape[:2])
     interpolation = cv2.INTER_AREA if ratio < 1 else cv2.INTER_CUBIC
     return cv2.resize(image, (0, 0), None, ratio, ratio, interpolation)
 
 
-def detect_features(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def detect_features(image: ndarray) -> tuple[ndarray, ndarray]:
     brisk = cv2.BRISK.create(None, 5)
     keypoints = brisk.detect(image)
     keypoints.sort(key=lambda kp: kp.response, reverse=True)
@@ -45,24 +46,27 @@ def detect_features(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def do_match(
-    keypoints1: np.ndarray,
-    descriptors1: np.ndarray,
-    keypoints2: np.ndarray,
-    descriptors2: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    distances = _ext.hamming_distance_matrix(descriptors1, descriptors2)
+    keypoints1: ndarray,
+    descriptors1: ndarray,
+    keypoints2: ndarray,
+    descriptors2: ndarray,
+) -> tuple[ndarray, ndarray, ndarray]:
+    # descriptors1: [M, 64]
+    # descriptors2: [N, 64]
+    distances = _ext.hamming_distance_matrix(descriptors1, descriptors2)  # [M, N]
 
-    x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]
-    y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]
+    x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]  # [M, 2]
+    y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]  # [2, N]
 
-    x_distances = np.take_along_axis(distances, x_distances_indices, 1)
-    y_distances = np.take_along_axis(distances, y_distances_indices, 0)
+    x_distances = np.take_along_axis(distances, x_distances_indices, 1)  # [M, 2]
+    y_distances = np.take_along_axis(distances, y_distances_indices, 0)  # [2, N]
 
+    # enforce ratio constraint, where the best match must be at least some amount better than the 2nd best
     should_take_x = (x_distances[:, 1] - x_distances[:, 0]) >= 10
     should_take_y = (y_distances[1, :] - y_distances[0, :]) >= 1  # not a typo
 
     # enforce symmetry constraint
-    should_take_x[y_distances_indices[0, np.where(~should_take_y)[0]]] = False
+    should_take_x[y_distances_indices[0, ~should_take_y]] = False
 
     y_indices = x_distances_indices[should_take_x, 0]
     weights = np.exp(distances[should_take_x, y_indices].astype(np.float32) * (-20 / 512))
@@ -85,11 +89,11 @@ def do_match(
 
 
 def find_transformation(
-    X: np.ndarray,
-    Y: np.ndarray,
-    weights: np.ndarray,
+    X: ndarray,
+    Y: ndarray,
+    weights: ndarray,
     transform: type[Transform],
-) -> tuple[np.ndarray, float]:
+) -> tuple[ndarray, float]:
     A = transform.expand(X, Y)
     T, loss = ransac(A, Y, weights, transform)
 
@@ -102,15 +106,14 @@ def find_transformation(
     return T, loss
 
 
-def geman_mcclure_loss(d: np.ndarray, sigma: float) -> np.ndarray:
+def geman_mcclure_loss(d: ndarray, sigma: float) -> ndarray:
     return d / (d + sigma)
 
 
-def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, transform: type[Transform]) -> tuple[np.ndarray, float]:
+def ransac(A: ndarray, Y: ndarray, weights: ndarray, transform: type[Transform]) -> tuple[ndarray, float]:
     samples = get_random_samples(A.shape[0], 4, N_ITERS_RANSAC, random.Random(4321))
 
     b_A = A[samples]  # [batch-size, ...]
-    # b_A = b_A.reshape(batch_size, -1, 9)
     b_Y = Y[samples]  # [batch-size, samples, 2]
 
     Ts = transform.estimate(b_A, b_Y, RANSAC_L2_REGULARIZATION)
@@ -118,7 +121,7 @@ def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, transform: type[Tr
     # compute losses
     Y_hat = transform.transform(A, Ts)
     distances = ((Y_hat - Y)**2).sum(axis=-1)
-    objective_losses = (geman_mcclure_loss(distances, SIGMA) * weights).sum(axis=-1) / weights.sum()
+    objective_losses = np.average(geman_mcclure_loss(distances, SIGMA), axis=-1, weights=weights)
     weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
 
@@ -126,8 +129,7 @@ def ransac(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, transform: type[Tr
     return Ts[best_idx], losses[best_idx].item()
 
 
-def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
-         initial_loss: float) -> tuple[np.ndarray, float]:
+def irls(A: ndarray, Y: ndarray, weights: ndarray, T: ndarray, initial_loss: float) -> tuple[ndarray, float]:
     last_T = T
     last_objective_loss = initial_loss
     last_full_loss = initial_loss
@@ -139,7 +141,6 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
         distances = ((Y_hat - Y)**2).sum(axis=-1)
         w = weights / (distances + SIGMA)
         WA = A * w[:, np.newaxis, np.newaxis]
-        # WY = Y * w[:, np.newaxis, np.newaxis]
         objective_loss = (w * distances).sum() / weights.sum()
 
         full_loss = objective_loss
@@ -168,7 +169,7 @@ def irls(A: np.ndarray, Y: np.ndarray, weights: np.ndarray, T: np.ndarray,
     return T, last_objective_loss
 
 
-def generate_warped_image(image: np.ndarray, template_shape: tuple[int, int], T):
+def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
     image_max_size: int = max(image.shape[:2])
     template_height, template_width = template_shape
     template_max_size: int = max(template_shape)
