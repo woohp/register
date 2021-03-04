@@ -91,7 +91,7 @@ class PerspectiveTransform(Transform):
     def estimate(A: ndarray, Y: ndarray, lamb: float) -> ndarray:
         # A: [..., 2, 9]
         # Y: [..., 2], not used
-        _, _, V = np.linalg.svd(A.reshape(A.shape[0], -1, A.shape[-1]))
+        _, _, V = np.linalg.svd(A.reshape(A.shape[:-3] + (-1, 9)))
         Ts = V[:, -1].reshape(-1, 3, 3)
         Ts /= Ts[:, -1:, -1:]
         Ts = Ts.swapaxes(1, 2)

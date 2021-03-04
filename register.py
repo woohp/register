@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 from numpy import ndarray
 import random
-from transforms import Transform, method_type
+from transforms import Transform, QuadraticTransform, method_type
 from utils.sampling import get_random_samples
 import _ext
 
@@ -95,11 +95,17 @@ def find_transformation(
     transform: type[Transform],
 ) -> tuple[ndarray, float]:
     A = transform.expand(X, Y)
-    T, loss = ransac(A, Y, weights, transform)
 
-    # expand transformation to quadratic, and repeat the IRLS step
-    # T = np.pad(T, [(0, 3), (0, 0)])
-    # T, loss = irls(A, Y, weights, T, loss)
+    # if the transform is quadratic, then expand transformation to quadratic, and repeat the IRLS step
+    if transform is QuadraticTransform:
+        T, loss = ransac(A[:, :3], Y, weights, transform)
+        T, loss = irls(A[:, :3], Y, weights, T, loss, transform)
+        T = np.pad(T, [(0, 3), (0, 0)])
+        T, loss = irls(A, Y, weights, T, loss, transform)
+
+    else:
+        T, loss = ransac(A, Y, weights, transform)
+        T, loss = irls(A, Y, weights, T, loss, transform)
 
     T.flags.writeable = False
 
@@ -129,44 +135,46 @@ def ransac(A: ndarray, Y: ndarray, weights: ndarray, transform: type[Transform])
     return Ts[best_idx], losses[best_idx].item()
 
 
-def irls(A: ndarray, Y: ndarray, weights: ndarray, T: ndarray, initial_loss: float) -> tuple[ndarray, float]:
+def irls(
+    A: ndarray,
+    Y: ndarray,
+    weights: ndarray,
+    T: ndarray,
+    initial_loss: float,
+    transform: type[Transform],
+) -> tuple[ndarray, float]:
     last_T = T
-    last_objective_loss = initial_loss
-    last_full_loss = initial_loss
+    last_loss = initial_loss
+
+    Y_hat = transform.transform(A, T)
+    distances = ((Y_hat - Y)**2).sum(axis=-1)
+    w = weights / (distances + SIGMA)
 
     for iter_idx in range(N_ITERS_IRLS):
-        Y_hat = A[:, 0, :3] @ T
-        Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
-        Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
+        # estimate a new transformation using the current weights
+        w = w.reshape([-1] + [1] * (A.ndim - 1))
+        WA = A * w
+        WY = Y * w
+        T = transform.estimate(WA, WY, 0.0)
+
+        # measure how good the new transformation is
+        Y_hat = transform.transform(A, T)
         distances = ((Y_hat - Y)**2).sum(axis=-1)
         w = weights / (distances + SIGMA)
-        WA = A * w[:, np.newaxis, np.newaxis]
         objective_loss = (w * distances).sum() / weights.sum()
+        weights_loss = (T[:, 1:]**2).sum(axis=(-2, -1))
+        loss: float = (objective_loss + weights_loss * RANSAC_L2_REGULARIZATION).item()
 
-        full_loss = objective_loss
-
-        if iter_idx > 0:
-            if full_loss > last_full_loss:
-                T = last_T
-                break
-            elif last_full_loss - full_loss < 1e-6:
-                last_objective_loss = objective_loss.item()
-                break
+        # if the new transformation is not better, return the old transformatoin
+        if loss >= last_loss:
+            return last_T, last_loss
+        elif last_loss - loss < 1e-6:
+            return T, loss
 
         last_T = T
-        last_objective_loss = objective_loss
-        last_full_loss = full_loss.item()
+        last_loss = loss
 
-        if iter_idx == N_ITERS_IRLS - 1:
-            break
-
-        _, _, V = np.linalg.svd(WA.reshape(-1, 9))
-        T = V[-1].reshape(3, 3)
-        T /= T[-1:, -1:]
-        T = T.swapaxes(0, 1)
-        # T = np.linalg.lstsq(WA, WY, rcond=None)[0]
-
-    return T, last_objective_loss
+    return T, last_loss
 
 
 def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
