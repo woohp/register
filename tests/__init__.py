@@ -7,7 +7,7 @@ import unittest
 class RegisterTestCase(unittest.TestCase):
     def test_register_against_self_should_produce_identity_transformation(self):
         img = np.asarray(Image.open('tests/assets/temp1.jpg'))
-        T, loss = register.register_image(img, img)
+        T, loss = register.register_image(img, img, 'affine')
         np.testing.assert_array_almost_equal(T, np.array([[0, 0], [1, 0], [0, 1]]))
         self.assertLess(loss, 0.01)
 
