@@ -1,5 +1,6 @@
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 namespace py = pybind11;
 using namespace pybind11::literals;
@@ -92,10 +93,70 @@ std::pair<array_t<float>, array_t<float>> generate_quadratic_remap_maps(int heig
     return { map_x, map_y };
 }
 
+std::vector<uint64_t> sord(const uint64_t k, const uint64_t sk)
+{
+    // implementation copied from here:
+    // https://math.stackexchange.com/questions/1368526/fast-way-to-get-a-combination-given-its-position-in-reverse-lexicographic-or
+    std::vector<uint64_t> idx(k);
+    if (k == 0)
+        return idx;
+    else if (k == 1)
+    {
+        idx[0] = sk;
+        return idx;
+    }
+
+    uint64_t s = sk;
+    // Find j such that binomial(j+k-1,k) <= s < binomial(j+k,k)
+    uint64_t j = 0;
+    uint64_t prev_b = 0;
+    uint64_t b = 1;
+    while (b <= s)
+    {
+        // Maintain invariants:
+        // prev_b == binomial(j+k-1,k), b == binomial(j+k,k)
+        prev_b = b;
+        j += 1;
+        b *= j + k;
+        b /= j;
+    }
+    b = prev_b;
+
+    // j is now the greatest index occurring in the tuple.
+    // From now on, we will search backwards, decreasing j.
+    for (int r = k - 1; r > 1; r--)
+    {
+        // b == binomial(j+r,r+1) <= s < binomial(j+r+1,r+1)
+        idx[r] = j;
+        s -= b;
+        // Update to b = binomial(j+r-1,r)
+        b *= r + 1;
+        b /= j + r;
+        // Find j such that binomial(j+r-1,r) <= s < binomial(j+r,r)
+        while (b > s)
+        {
+            j -= 1;
+            b *= j;
+            b /= j + r;
+        }
+    }
+    // Simplified handling of r = 1
+    // b == binomial(j+r,r+1) <= s < binomial(j+r+1,r+1)
+    idx[1] = j;
+    s -= b;
+
+    // Simplified handling of r = 0
+    // binomial(j+r,r+1) == s iff j == s
+    idx[0] = s;
+    return idx;
+}
+
 PYBIND11_MODULE(_ext, m)
 {
     m.doc() = "Hamming Distance Matrix";
 
     m.def("hamming_distance_matrix", &hamming_distance_matrix, "", "X"_a, "Y"_a);
     m.def("generate_quadratic_remap_maps", &generate_quadratic_remap_maps, "", "height"_a, "width"_a, "T"_a);
+
+    m.def("sord", &sord, "", "k"_a, "sk"_a);
 }
