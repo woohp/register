@@ -1,10 +1,12 @@
+import random
+
 import cv2
 import numpy as np
 from numpy import ndarray
-import random
-from transforms import Transform, QuadraticTransform, method_type
-from utils.sampling import get_random_samples
+
 import _ext
+from transforms import QuadraticTransform, Transform, method_type
+from utils.sampling import get_random_samples
 
 TARGET_MAX_SIZE = 1_200
 N_ITERS_RANSAC = 4_000

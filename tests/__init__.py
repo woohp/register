@@ -1,7 +1,9 @@
+import unittest
+
 import numpy as np
 from PIL import Image
+
 import register
-import unittest
 
 
 class RegisterTestCase(unittest.TestCase):

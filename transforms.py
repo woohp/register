@@ -1,7 +1,9 @@
 from __future__ import annotations
+
+from typing import Literal
+
 import numpy as np
 from numpy import ndarray
-from typing import Literal
 
 method_type = Literal['perspective', 'affine', 'quadratic']
 
