@@ -39,11 +39,13 @@ def aspect_aware_resize(image: ndarray, max_size: float) -> ndarray:
 
 
 def detect_features(image: ndarray) -> tuple[ndarray, ndarray]:
-    brisk = cv2.BRISK.create(None, 5)
-    keypoints = brisk.detect(image)
+    detector = cv2.BRISK.create(None, 5)
+    processor = cv2.xfeatures2d.BEBLID_create(5.0, cv2.xfeatures2d.BEBLID_SIZE_512_BITS)
+
+    keypoints = detector.detect(image, None)
     keypoints.sort(key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
-    keypoints, descriptors = brisk.compute(image, keypoints)
+    keypoints, descriptors = processor.compute(image, keypoints)
     return np.array([kp.pt for kp in keypoints], dtype=np.float32) / TARGET_MAX_SIZE, descriptors
 
 
