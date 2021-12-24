@@ -4,9 +4,9 @@ import cv2
 import numpy as np
 from numpy import ndarray
 
-import _ext
-from transforms import QuadraticTransform, Transform, method_type
-from utils.sampling import get_random_samples
+from ._ext import generate_quadratic_remap_maps, hamming_distance_matrix
+from .transforms import QuadraticTransform, Transform, method_type
+from .utils.sampling import get_random_samples
 
 TARGET_MAX_SIZE = 1_200
 N_ITERS_RANSAC = 4_000
@@ -42,8 +42,7 @@ def detect_features(image: ndarray) -> tuple[ndarray, ndarray]:
     detector = cv2.BRISK.create(None, 5)
     processor = cv2.xfeatures2d.BEBLID_create(5.0, cv2.xfeatures2d.BEBLID_SIZE_512_BITS)
 
-    keypoints = detector.detect(image, None)
-    keypoints.sort(key=lambda kp: kp.response, reverse=True)
+    keypoints = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
     keypoints, descriptors = processor.compute(image, keypoints)
     return np.array([kp.pt for kp in keypoints], dtype=np.float32) / TARGET_MAX_SIZE, descriptors
@@ -57,7 +56,7 @@ def do_match(
 ) -> tuple[ndarray, ndarray, ndarray]:
     # descriptors1: [M, 64]
     # descriptors2: [N, 64]
-    distances = _ext.hamming_distance_matrix(descriptors1, descriptors2)  # [M, N]
+    distances = hamming_distance_matrix(descriptors1, descriptors2)  # [M, N]
 
     x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]  # [M, 2]
     y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]  # [2, N]
@@ -184,6 +183,7 @@ def irls(
 def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
     image_max_size: int = max(image.shape[:2])
     template_height, template_width = template_shape
+    out_size = (template_width, template_height)
     template_max_size: int = max(template_shape)
 
     if T.shape == (3, 2):
@@ -194,7 +194,7 @@ def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
         T[1:] *= template_max_size / image_max_size
         T = np.roll(T, -1, axis=0).T
 
-        return cv2.warpAffine(image, T, tuple(reversed(template_shape)), cv2.INTER_AREA)
+        return cv2.warpAffine(image, T, out_size, cv2.INTER_AREA)
 
     elif T.shape == (6, 2):
         # If this is a quadratic transformation, use cv2.remap
@@ -206,7 +206,7 @@ def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
         T[1:] /= template_max_size
         T[3:] /= template_max_size
 
-        dest_grid = _ext.generate_quadratic_remap_maps(*template_shape, T)
+        dest_grid = generate_quadratic_remap_maps(*template_shape, T)
 
         return cv2.remap(image, *dest_grid, cv2.INTER_AREA)
 
@@ -217,4 +217,4 @@ def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
         T[2] *= image_max_size
         T[:, -1] /= template_max_size
 
-        return cv2.warpPerspective(image, T.T, tuple(reversed(template_shape)), cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
+        return cv2.warpPerspective(image, T.T, out_size, cv2.INTER_AREA)

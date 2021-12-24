@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 from pybind11.setup_helpers import Pybind11Extension, build_ext
-from setuptools import setup
+from setuptools import find_packages, setup
 
 ext_modules = [
     Pybind11Extension(
-        '_ext',
+        'register._ext',
         [
             'src/module.cpp',
         ],
@@ -14,9 +14,10 @@ ext_modules = [
 ]
 
 setup(
-    name='_ext',
-    # description='PDF Renderer',
+    name='register',
+    description='Image Registration',
     version='0.0.1',
+    packages=find_packages(exclude=('tests', )),
     ext_modules=ext_modules,
     cmdclass={'build_ext': build_ext},
     test_suite='tests',

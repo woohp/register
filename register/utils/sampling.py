@@ -1,7 +1,7 @@
 import math
 from random import Random
 
-import _ext
+from .. import _ext
 
 
 def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> list[list[int]]:

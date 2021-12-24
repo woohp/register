@@ -153,10 +153,9 @@ std::vector<uint64_t> sord(const uint64_t k, const uint64_t sk)
 
 PYBIND11_MODULE(_ext, m)
 {
-    m.doc() = "Hamming Distance Matrix";
+    m.doc() = "Utility functions implemented in C++ for greater speed";
 
     m.def("hamming_distance_matrix", &hamming_distance_matrix, "", "X"_a, "Y"_a);
     m.def("generate_quadratic_remap_maps", &generate_quadratic_remap_maps, "", "height"_a, "width"_a, "T"_a);
-
     m.def("sord", &sord, "", "k"_a, "sk"_a);
 }
