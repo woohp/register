@@ -15,22 +15,23 @@ int hamming_distance(const uint64_t* const x, const uint64_t* const y)
     // Note: there may be some compilation issues on certain CPUs that do not have sufficient registers
     // to hold all the intermediate xor results.
     // TODO: make a general path that does not use inline assembly
-    __asm__("popcnt %4, %4    \n\t"
-            "add %4, %0       \n\t"
-            "popcnt %5, %5    \n\t"
-            "add %5, %1       \n\t"
-            "popcnt %6, %6    \n\t"
-            "add %6, %2       \n\t"
-            "popcnt %7, %7    \n\t"
-            "add %7, %3       \n\t"
-            "popcnt %8, %8    \n\t"
-            "add %8, %0       \n\t"
-            "popcnt %9, %9    \n\t"
-            "add %9, %1       \n\t"
-            "popcnt %10, %10  \n\t"
-            "add %10, %2      \n\t"
-            "popcnt %11, %11  \n\t"
-            "add %11, %3      \n\t"  // +r means input/output, r means intput
+    __asm__(R"(
+popcnt %4, %4
+add %4, %0
+popcnt %5, %5
+add %5, %1
+popcnt %6, %6
+add %6, %2
+popcnt %7, %7
+add %7, %3
+popcnt %8, %8
+add %8, %0
+popcnt %9, %9
+add %9, %1
+popcnt %10, %10
+add %10, %2
+popcnt %11, %11
+add %11, %3)"  // +r means input/output, r means intput
             : "+r"(count[0]), "+r"(count[1]), "+r"(count[2]), "+r"(count[3])
             : "r"(x[0] ^ y[0]),
               "r"(x[1] ^ y[1]),
