@@ -2,7 +2,7 @@ import random
 
 import cv2
 import numpy as np
-from numpy import ndarray
+from numpy.typing import NDArray
 
 from ._ext import generate_quadratic_remap_maps, hamming_distance_matrix
 from .transforms import QuadraticTransform, Transform, method_type
@@ -14,8 +14,11 @@ N_ITERS_IRLS = 50
 SIGMA = 0.00003
 RANSAC_L2_REGULARIZATION = 0.005
 
+f32Array = NDArray[np.float32]
+u8Array = NDArray[np.uint8]
 
-def register_image(image1: ndarray, image2: ndarray, method: method_type = 'perspective'):
+
+def register_image(image1: u8Array, image2: u8Array, method: method_type = 'perspective'):
     image1 = resize_and_blur(image1)
     image2 = resize_and_blur(image2)
 
@@ -26,19 +29,19 @@ def register_image(image1: ndarray, image2: ndarray, method: method_type = 'pers
     return find_transformation(X, Y, weights, Transform.get_transform(method))
 
 
-def resize_and_blur(image: ndarray) -> ndarray:
+def resize_and_blur(image: u8Array) -> u8Array:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
     image = cv2.GaussianBlur(image, (3, 3), 2, 2)
     return image
 
 
-def aspect_aware_resize(image: ndarray, max_size: float) -> ndarray:
+def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
     ratio = max_size / max(image.shape[:2])
     interpolation = cv2.INTER_AREA if ratio < 1 else cv2.INTER_CUBIC
     return cv2.resize(image, (0, 0), None, ratio, ratio, interpolation)
 
 
-def detect_features(image: ndarray) -> tuple[ndarray, ndarray]:
+def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     detector = cv2.BRISK.create(None, 5)
     processor = cv2.xfeatures2d.BEBLID_create(5.0, cv2.xfeatures2d.BEBLID_SIZE_512_BITS)
 
@@ -49,11 +52,11 @@ def detect_features(image: ndarray) -> tuple[ndarray, ndarray]:
 
 
 def do_match(
-    keypoints1: ndarray,
-    descriptors1: ndarray,
-    keypoints2: ndarray,
-    descriptors2: ndarray,
-) -> tuple[ndarray, ndarray, ndarray]:
+    keypoints1: f32Array,
+    descriptors1: u8Array,
+    keypoints2: f32Array,
+    descriptors2: u8Array,
+) -> tuple[f32Array, f32Array, f32Array]:  # tuple of (X, Y, weights)
     # descriptors1: [M, 64]
     # descriptors2: [N, 64]
     distances = hamming_distance_matrix(descriptors1, descriptors2)  # [M, N]
@@ -92,11 +95,11 @@ def do_match(
 
 
 def find_transformation(
-    X: ndarray,
-    Y: ndarray,
-    weights: ndarray,
+    X: f32Array,
+    Y: f32Array,
+    weights: f32Array,
     transform: type[Transform],
-) -> tuple[ndarray, float]:
+) -> tuple[f32Array, float]:
     A = transform.expand(X, Y)
 
     # if the transform is quadratic, then expand transformation to quadratic, and repeat the IRLS step
@@ -115,11 +118,11 @@ def find_transformation(
     return T, loss
 
 
-def geman_mcclure_loss(d: ndarray, sigma: float) -> ndarray:
+def geman_mcclure_loss(d: f32Array, sigma: float) -> f32Array:
     return d / (d + sigma)
 
 
-def ransac(A: ndarray, Y: ndarray, weights: ndarray, transform: type[Transform]) -> tuple[ndarray, float]:
+def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transform]) -> tuple[f32Array, float]:
     samples = get_random_samples(A.shape[0], 4, N_ITERS_RANSAC, random.Random(4321))
 
     b_A = A[samples]  # [batch-size, ...]
@@ -139,13 +142,15 @@ def ransac(A: ndarray, Y: ndarray, weights: ndarray, transform: type[Transform])
 
 
 def irls(
-    A: ndarray,
-    Y: ndarray,
-    weights: ndarray,
-    T: ndarray,
+    A: f32Array,
+    Y: f32Array,
+    weights: f32Array,
+    T: f32Array,
     initial_loss: float,
     transform: type[Transform],
-) -> tuple[ndarray, float]:
+) -> tuple[f32Array, float]:
+    """Iteratively reweighted least squares"""
+
     last_T = T
     last_loss = initial_loss
 
@@ -180,7 +185,7 @@ def irls(
     return T, last_loss
 
 
-def generate_warped_image(image: ndarray, template_shape: tuple[int, int], T):
+def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f32Array):
     image_max_size: int = max(image.shape[:2])
     template_height, template_width = template_shape
     out_size = (template_width, template_height)
