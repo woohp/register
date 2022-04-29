@@ -9,6 +9,7 @@ ext_modules = [
             'src/module.cpp',
         ],
         language='c++',
+        extra_compile_args=['-std=c++2a', '-march=skylake'],
         # define_macros=[('VERSION_INFO', __version__)],
     ),
 ]

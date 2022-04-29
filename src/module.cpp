@@ -1,3 +1,4 @@
+#include <bit>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -5,45 +6,6 @@
 namespace py = pybind11;
 using namespace pybind11::literals;
 using pybind11::array_t;
-
-int hamming_distance(const uint64_t* const x, const uint64_t* const y)
-{
-    uint64_t count[4] = { 0, 0, 0, 0 };
-
-    // Inline assembly documentation: https://www.ibiblio.org/gferg/ldp/GCC-Inline-Assembly-HOWTO.html#s4
-    // Implementation based on https://danluu.com/assembly-intrinsics/
-    // Note: there may be some compilation issues on certain CPUs that do not have sufficient registers
-    // to hold all the intermediate xor results.
-    // TODO: make a general path that does not use inline assembly
-    __asm__(R"(
-popcnt %4, %4
-add %4, %0
-popcnt %5, %5
-add %5, %1
-popcnt %6, %6
-add %6, %2
-popcnt %7, %7
-add %7, %3
-popcnt %8, %8
-add %8, %0
-popcnt %9, %9
-add %9, %1
-popcnt %10, %10
-add %10, %2
-popcnt %11, %11
-add %11, %3)"  // +r means input/output, r means intput
-            : "+r"(count[0]), "+r"(count[1]), "+r"(count[2]), "+r"(count[3])
-            : "r"(x[0] ^ y[0]),
-              "r"(x[1] ^ y[1]),
-              "r"(x[2] ^ y[2]),
-              "r"(x[3] ^ y[3]),
-              "r"(x[4] ^ y[4]),
-              "r"(x[5] ^ y[5]),
-              "r"(x[6] ^ y[6]),
-              "r"(x[7] ^ y[7]));
-
-    return static_cast<int>(count[0] + count[1] + count[2] + count[3]);
-}
 
 array_t<uint16_t> hamming_distance_matrix(array_t<uint8_t> X, array_t<uint8_t> Y)
 {
@@ -57,8 +19,11 @@ array_t<uint16_t> hamming_distance_matrix(array_t<uint8_t> X, array_t<uint8_t> Y
     {
         for (py::ssize_t j = 0; j < Y_a.shape(0); j++)
         {
-            result_a(i, j) = hamming_distance(
-                reinterpret_cast<const uint64_t*>(&X_a(i, 0)), reinterpret_cast<const uint64_t*>(&Y_a(j, 0)));
+            using std::popcount;
+            const uint64_t* const __restrict__ x = reinterpret_cast<const uint64_t*>(&X_a(i, 0));
+            const uint64_t* const __restrict__ y = reinterpret_cast<const uint64_t*>(&Y_a(j, 0));
+            result_a(i, j) = popcount(x[0] ^ y[0]) + popcount(x[1] ^ y[1]) + popcount(x[2] ^ y[2]) + popcount(x[3] ^ y[3])
+                + popcount(x[4] ^ y[4]) + popcount(x[5] ^ y[5]) + popcount(x[6] ^ y[6]) + popcount(x[7] ^ y[7]);
         }
     }
 
