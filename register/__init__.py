@@ -6,6 +6,7 @@ from numpy.typing import NDArray
 
 from ._ext import generate_quadratic_remap_maps, hamming_distance_matrix
 from .transforms import QuadraticTransform, Transform, method_type
+from .utils import get_distance_squared
 from .utils.sampling import get_random_samples
 
 TARGET_MAX_SIZE = 1_200
@@ -132,8 +133,8 @@ def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transfor
 
     # compute losses
     Y_hat = transform.transform(A, Ts)
-    distances = ((Y_hat - Y)**2).sum(axis=-1)
-    objective_losses = np.average(geman_mcclure_loss(distances, SIGMA), axis=-1, weights=weights)
+    distance_squared = get_distance_squared(Y_hat, Y)
+    objective_losses = np.average(geman_mcclure_loss(distance_squared, SIGMA), axis=-1, weights=weights)
     weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
 
@@ -155,8 +156,7 @@ def irls(
     last_loss = initial_loss
 
     Y_hat = transform.transform(A, T)
-    distances = ((Y_hat - Y)**2).sum(axis=-1)
-    w = weights / (distances + SIGMA)
+    w = weights / (get_distance_squared(Y_hat, Y) + SIGMA)
 
     for iter_idx in range(N_ITERS_IRLS):
         # estimate a new transformation using the current weights
@@ -167,9 +167,9 @@ def irls(
 
         # measure how good the new transformation is
         Y_hat = transform.transform(A, T)
-        distances = ((Y_hat - Y)**2).sum(axis=-1)
-        w = weights / (distances + SIGMA)
-        objective_loss = (w * distances).sum() / weights.sum()
+        distance_squared = get_distance_squared(Y_hat, Y)
+        w = weights / (distance_squared + SIGMA)
+        objective_loss = (w * distance_squared).sum() / weights.sum()
         weights_loss = (T[:, 1:]**2).sum(axis=(-2, -1))
         loss: float = (objective_loss + weights_loss * RANSAC_L2_REGULARIZATION).item()
 
