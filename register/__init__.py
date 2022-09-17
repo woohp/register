@@ -19,7 +19,7 @@ f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
 
-def register_image(image1: u8Array, image2: u8Array, method: method_type = 'perspective'):
+def register_image(image1: u8Array, image2: u8Array, method: method_type = 'perspective') -> tuple[f32Array, float]:
     image1 = resize_and_blur(image1)
     image2 = resize_and_blur(image2)
 

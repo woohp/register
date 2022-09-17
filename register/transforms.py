@@ -11,11 +11,11 @@ method_type = Literal['perspective', 'affine', 'quadratic', 'thin_plate_spline']
 
 class Transform:
     @staticmethod
-    def expand(X: f32Array, Y: f32Array):
+    def expand(X: f32Array, Y: f32Array) -> f32Array:
         pass
 
     @staticmethod
-    def estimate(A: f32Array, Y: f32Array, lamb: float):
+    def estimate(A: f32Array, Y: f32Array, lamb: float) -> f32Array:
         pass
 
     @staticmethod
@@ -67,13 +67,13 @@ class PolynomialTransform(Transform):
 
 class AffineTransform(PolynomialTransform):
     @staticmethod
-    def expand(X: f32Array, Y: f32Array):
+    def expand(X: f32Array, Y: f32Array) -> f32Array:
         return poly_expand(X, 1)
 
 
 class QuadraticTransform(PolynomialTransform):
     @staticmethod
-    def expand(X: f32Array, Y: f32Array):
+    def expand(X: f32Array, Y: f32Array) -> f32Array:
         return poly_expand(X, 2)
 
 
