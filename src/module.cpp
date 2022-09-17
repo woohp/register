@@ -7,7 +7,8 @@ namespace py = pybind11;
 using namespace pybind11::literals;
 using pybind11::array_t;
 
-array_t<uint16_t> hamming_distance_matrix(array_t<uint8_t> X, array_t<uint8_t> Y)
+array_t<uint16_t>
+hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t, py::array::c_style> Y)
 {
     auto X_a = X.unchecked<2>();
     auto Y_a = Y.unchecked<2>();
@@ -22,15 +23,17 @@ array_t<uint16_t> hamming_distance_matrix(array_t<uint8_t> X, array_t<uint8_t> Y
             using std::popcount;
             const uint64_t* const __restrict__ x = reinterpret_cast<const uint64_t*>(&X_a(i, 0));
             const uint64_t* const __restrict__ y = reinterpret_cast<const uint64_t*>(&Y_a(j, 0));
-            result_a(i, j) = popcount(x[0] ^ y[0]) + popcount(x[1] ^ y[1]) + popcount(x[2] ^ y[2]) + popcount(x[3] ^ y[3])
-                + popcount(x[4] ^ y[4]) + popcount(x[5] ^ y[5]) + popcount(x[6] ^ y[6]) + popcount(x[7] ^ y[7]);
+            result_a(i, j) = popcount(x[0] ^ y[0]) + popcount(x[1] ^ y[1]) + popcount(x[2] ^ y[2])
+                + popcount(x[3] ^ y[3]) + popcount(x[4] ^ y[4]) + popcount(x[5] ^ y[5]) + popcount(x[6] ^ y[6])
+                + popcount(x[7] ^ y[7]);
         }
     }
 
     return result;
 }
 
-std::pair<array_t<float>, array_t<float>> generate_quadratic_remap_maps(int height, int width, array_t<float> T)
+std::pair<array_t<float>, array_t<float>>
+generate_quadratic_remap_maps(int height, int width, array_t<float, py::array::c_style> T)
 {
     array_t<float> map_x({ height, width });
     array_t<float> map_y({ height, width });
@@ -62,7 +65,7 @@ std::pair<array_t<float>, array_t<float>> generate_quadratic_remap_maps(int heig
 std::vector<uint64_t> sord(const uint64_t k, const uint64_t sk)
 {
     // implementation copied from here:
-    // https://math.stackexchange.com/questions/1368526/fast-way-to-get-a-combination-given-its-position-in-reverse-lexicographic-or
+    // https://math.stackexchange.com/a/1370461
     std::vector<uint64_t> idx(k);
     if (k == 0)
         return idx;
@@ -121,7 +124,8 @@ PYBIND11_MODULE(_ext, m)
 {
     m.doc() = "Utility functions implemented in C++ for greater speed";
 
-    m.def("hamming_distance_matrix", &hamming_distance_matrix, "", "X"_a, "Y"_a);
-    m.def("generate_quadratic_remap_maps", &generate_quadratic_remap_maps, "", "height"_a, "width"_a, "T"_a);
+    m.def("hamming_distance_matrix", &hamming_distance_matrix, "", "X"_a.noconvert(), "Y"_a.noconvert());
+    m.def(
+        "generate_quadratic_remap_maps", &generate_quadratic_remap_maps, "", "height"_a, "width"_a, "T"_a.noconvert());
     m.def("sord", &sord, "", "k"_a, "sk"_a);
 }
