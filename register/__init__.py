@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import random
 
 import cv2
@@ -19,7 +21,7 @@ f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
 
-def register_image(image1: u8Array, image2: u8Array, method: method_type = 'perspective') -> tuple[f32Array, float]:
+def register_image(image1: u8Array, image2: u8Array, method: method_type = "perspective") -> tuple[f32Array, float]:
     image1 = resize_and_blur(image1)
     image2 = resize_and_blur(image2)
 
@@ -135,7 +137,7 @@ def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transfor
     Y_hat = transform.transform(A, Ts)
     distance_squared = get_distance_squared(Y_hat, Y)
     objective_losses = np.average(geman_mcclure_loss(distance_squared, SIGMA), axis=-1, weights=weights)
-    weights_losses = (Ts[:, 1:]**2).sum(axis=(1, 2))
+    weights_losses = (Ts[:, 1:] ** 2).sum(axis=(1, 2))
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
 
     best_idx = np.argmin(losses)
@@ -170,7 +172,7 @@ def irls(
         distance_squared = get_distance_squared(Y_hat, Y)
         w = weights / (distance_squared + SIGMA)
         objective_loss = (w * distance_squared).sum() / weights.sum()
-        weights_loss = (T[:, 1:]**2).sum(axis=(-2, -1))
+        weights_loss = (T[:, 1:] ** 2).sum(axis=(-2, -1))
         loss: float = (objective_loss + weights_loss * RANSAC_L2_REGULARIZATION).item()
 
         # if the new transformation is not better, return the old transformatoin
@@ -185,7 +187,7 @@ def irls(
     return T, last_loss
 
 
-def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f32Array):
+def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f32Array) -> u8Array:
     image_max_size: int = max(image.shape[:2])
     template_height, template_width = template_shape
     out_size = (template_width, template_height)
@@ -223,3 +225,6 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[:, -1] /= template_max_size
 
         return cv2.warpPerspective(image, T.T, out_size, cv2.INTER_AREA)
+
+    else:
+        raise ValueError(f"unrecognized transformation: {T!r}")

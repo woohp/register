@@ -1,40 +1,46 @@
 from __future__ import annotations
 
-from typing import Literal
+from abc import ABC, abstractmethod
+from typing import Literal, TypeVar
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import NBitBase, NDArray
 
-f32Array = NDArray[np.float32]
-method_type = Literal['perspective', 'affine', 'quadratic', 'thin_plate_spline']
+FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
+method_type = Literal["perspective", "affine", "quadratic", "thin_plate_spline"]
 
 
 class Transform:
     @staticmethod
-    def expand(X: f32Array, Y: f32Array) -> f32Array:
+    @abstractmethod
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         pass
 
     @staticmethod
-    def estimate(A: f32Array, Y: f32Array, lamb: float) -> f32Array:
+    @abstractmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         pass
 
     @staticmethod
-    def transform(A: f32Array, T: f32Array):
+    @abstractmethod
+    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
         pass
 
     @staticmethod
     def get_transform(method: method_type) -> type[Transform]:
-        if method == 'perspective':
+        if method == "perspective":
             return PerspectiveTransform
-        elif method == 'affine':
+        elif method == "affine":
             return AffineTransform
-        elif method == 'quadratic':
+        elif method == "quadratic":
             return QuadraticTransform
-        elif method == 'thin_plate_spline':
-            return ThinPlateSplineTransform
+        # elif method == "thin_plate_spline":
+        #     return ThinPlateSplineTransform
+        else:
+            raise ValueError(f"unrecognized method: {method_type!r}")
 
 
-def poly_expand(X: f32Array, d: int) -> f32Array:
+def poly_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
     if d == 1:
         return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
@@ -52,7 +58,7 @@ def poly_expand(X: f32Array, d: int) -> f32Array:
 
 class PolynomialTransform(Transform):
     @staticmethod
-    def estimate(A: f32Array, Y: f32Array, lamb: float):
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         # A: [..., samples, K] where K is determined by the degree
         # Y: [..., samples, 2]
         # solve regularized least squares
@@ -61,25 +67,25 @@ class PolynomialTransform(Transform):
         return np.linalg.solve(A_T @ A + lamb * np.identity(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
     @staticmethod
-    def transform(A: f32Array, T: f32Array):
+    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
         return A @ T
 
 
 class AffineTransform(PolynomialTransform):
     @staticmethod
-    def expand(X: f32Array, Y: f32Array) -> f32Array:
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         return poly_expand(X, 1)
 
 
 class QuadraticTransform(PolynomialTransform):
     @staticmethod
-    def expand(X: f32Array, Y: f32Array) -> f32Array:
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         return poly_expand(X, 2)
 
 
 class PerspectiveTransform(Transform):
     @staticmethod
-    def expand(X: f32Array, Y: f32Array) -> f32Array:
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         # X: [..., 2]
         # Y: [..., 2]
         A = np.zeros((*X.shape[:-1], 2, 9), dtype=X.dtype)
@@ -93,7 +99,7 @@ class PerspectiveTransform(Transform):
         return A
 
     @staticmethod
-    def estimate(A: f32Array, Y: f32Array, lamb: float) -> f32Array:
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         # A: [..., 2, 9]
         # Y: [..., 2], not used
         _, _, V = np.linalg.svd(A.reshape(A.shape[:-3] + (-1, 9)))
@@ -103,7 +109,7 @@ class PerspectiveTransform(Transform):
         return Ts
 
     @staticmethod
-    def transform(A: f32Array, T: f32Array) -> f32Array:
+    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
         Y_hat = A[..., 0, :3] @ T
         Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
         Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
