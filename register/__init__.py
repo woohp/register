@@ -46,7 +46,7 @@ def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
 
 def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     detector = cv2.BRISK.create(None, 5)
-    processor = cv2.xfeatures2d.BEBLID_create(5.0, cv2.xfeatures2d.BEBLID_SIZE_512_BITS)
+    processor = cv2.xfeatures2d.TEBLID_create(5.0, cv2.xfeatures2d.TEBLID_SIZE_512_BITS)
 
     keypoints = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
