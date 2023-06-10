@@ -4,13 +4,13 @@ from abc import ABC, abstractmethod
 from typing import Literal, TypeVar
 
 import numpy as np
-from numpy.typing import NBitBase, NDArray
+from numpy.typing import NDArray
 
 FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
 method_type = Literal["perspective", "affine", "quadratic", "thin_plate_spline"]
 
 
-class Transform:
+class Transform(ABC):
     @staticmethod
     @abstractmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:

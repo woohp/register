@@ -21,8 +21,8 @@ hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t,
         for (py::ssize_t j = 0; j < Y_a.shape(0); j++)
         {
             using std::popcount;
-            const uint64_t* const __restrict__ x = reinterpret_cast<const uint64_t*>(&X_a(i, 0));
-            const uint64_t* const __restrict__ y = reinterpret_cast<const uint64_t*>(&Y_a(j, 0));
+            const uint64_t* const x = reinterpret_cast<const uint64_t*>(&X_a(i, 0));
+            const uint64_t* const y = reinterpret_cast<const uint64_t*>(&Y_a(j, 0));
             result_a(i, j) = popcount(x[0] ^ y[0]) + popcount(x[1] ^ y[1]) + popcount(x[2] ^ y[2])
                 + popcount(x[3] ^ y[3]) + popcount(x[4] ^ y[4]) + popcount(x[5] ^ y[5]) + popcount(x[6] ^ y[6])
                 + popcount(x[7] ^ y[7]);
