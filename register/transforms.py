@@ -14,7 +14,7 @@ class Transform(ABC):
     @staticmethod
     @abstractmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        pass
+        """Expand the data into their bases according to the basis function"""
 
     @staticmethod
     @abstractmethod
