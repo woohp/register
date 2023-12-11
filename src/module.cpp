@@ -1,24 +1,37 @@
 #include <bit>
-#include <pybind11/numpy.h>
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
+#include <nanobind/nanobind.h>
+#include <nanobind/ndarray.h>
+#include <nanobind/stl/vector.h>
+// #include <pybind11/numpy.h>
+// #include <pybind11/pybind11.h>
+// #include <pybind11/stl.h>
 
-namespace py = pybind11;
-using namespace pybind11::literals;
-using pybind11::array_t;
+namespace nb = nanobind;
+using namespace nb::literals;
 
-array_t<uint16_t>
-hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t, py::array::c_style> Y)
+template <typename T>
+using ndarray2d_t = nb::ndarray<T, nb::shape<nb::any, 2>, nb::device::cpu>;
+
+template <typename T>
+ndarray2d_t<T> create_empty_array(unsigned long rows, unsigned long height)
 {
-    auto X_a = X.unchecked<2>();
-    auto Y_a = Y.unchecked<2>();
+    T* data = new T[rows * height];
+    nb::capsule owner(data, [](void* p) noexcept { delete[] reinterpret_cast<T*>(p); });
+    return nb::ndarray<T, nb::shape<nb::any, 2>, nb::device::cpu>(data, { rows, height });
+}
 
-    auto result = array_t<uint16_t>({ X_a.shape(0), Y_a.shape(0) });
-    auto result_a = result.mutable_unchecked<2>();
+ndarray2d_t<uint16_t>
+hamming_distance_matrix(ndarray2d_t<uint8_t> X, ndarray2d_t<uint8_t> Y)
+{
+    auto X_a = X.view();
+    auto Y_a = Y.view();
 
-    for (py::ssize_t i = 0; i < X_a.shape(0); i++)
+    auto result = create_empty_array<uint16_t>(X_a.shape(0), Y_a.shape(0));
+    auto result_a = result.view();
+
+    for (ssize_t i = 0; i < X_a.shape(0); i++)
     {
-        for (py::ssize_t j = 0; j < Y_a.shape(0); j++)
+        for (ssize_t j = 0; j < Y_a.shape(0); j++)
         {
             using std::popcount;
             const uint64_t* const x = reinterpret_cast<const uint64_t*>(&X_a(i, 0));
@@ -32,16 +45,16 @@ hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t,
     return result;
 }
 
-std::pair<array_t<float>, array_t<float>>
-generate_quadratic_remap_maps(int height, int width, array_t<float, py::array::c_style> T)
+std::pair<ndarray2d_t<float>, ndarray2d_t<float>>
+generate_quadratic_remap_maps(int height, int width, ndarray2d_t<float> T)
 {
-    array_t<float> map_x({ height, width });
-    array_t<float> map_y({ height, width });
+    ndarray2d_t<float> map_x = create_empty_array<float>(height, width);
+    ndarray2d_t<float> map_y = create_empty_array<float>(height, width);
 
     // create the accessor objects
-    auto T_a = T.unchecked<2>();
-    auto map_x_a = map_x.mutable_unchecked<2>();
-    auto map_y_a = map_y.mutable_unchecked<2>();
+    auto T_a = T.view();
+    auto map_x_a = map_x.view();
+    auto map_y_a = map_y.view();
 
     for (int y = 0; y < height; y++)
     {
@@ -120,7 +133,7 @@ std::vector<uint64_t> sord(const uint64_t k, const uint64_t sk)
     return idx;
 }
 
-PYBIND11_MODULE(_ext, m)
+NB_MODULE(_ext, m)
 {
     m.doc() = "Utility functions implemented in C++ for greater speed";
 
