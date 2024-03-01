@@ -162,7 +162,7 @@ def irls(
     Y_hat = transform.transform(A, T)
     w = weights / (get_distance_squared(Y_hat, Y) + SIGMA)
 
-    for iter_idx in range(N_ITERS_IRLS):
+    for _ in range(N_ITERS_IRLS):
         # estimate a new transformation using the current weights
         w = w.reshape([-1] + [1] * (A.ndim - 1))
         WA = A * w

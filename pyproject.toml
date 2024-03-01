@@ -16,12 +16,10 @@ build-backend = "setuptools.build_meta"
 
 [project.optional-dependencies]
 dev = [
-    "black",
-    "flake8",
     "ipdb",
-    "isort",
     "mypy >= 1.7",
     "pytest",
+    "ruff",
 ]
 opencv = [
     "opencv-python",
@@ -29,16 +27,6 @@ opencv = [
 
 [tool.setuptools.packages.find]
 exclude = ["tests"]
-
-[tool.black]
-line-length = 120
-target_version = ["py311"]
-preview = true
-
-[tool.isort]
-profile = "black"
-line_length = 119
-multi_line_output = 5
 
 [tool.mypy]
 python_version = "3.11"
@@ -53,3 +41,14 @@ extra_checks = true
 allow_untyped_defs = false
 allow_any_generics = false
 plugins = "numpy.typing.mypy_plugin"
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py311"
+preview = true
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "U", "YTT", "B", "C4", "Q"]
+ignore = ["E203", "B028", "B905", "C408"]
+preview = true

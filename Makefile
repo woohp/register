@@ -3,10 +3,10 @@
 python_files = register tests setup.py
 
 format:
-	isort $(python_files)
-	black $(python_files)
+	ruff check --select I --fix $(python_files)
+	ruff format --preview $(python_files)
 	clang-format -i src/*.cpp
 
 lint:
-	flake8 $(python_files)
+	ruff check --preview $(python_files)
 	mypy $(python_files)
