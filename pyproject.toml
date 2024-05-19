@@ -2,7 +2,7 @@
 name = "register"
 description = "Image Registration"
 version = "0.0.1"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 # readme = "README.md"
 
 [build-system]
@@ -29,7 +29,7 @@ opencv = [
 exclude = ["tests"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 check_untyped_defs = true
 no_implicit_optional = true
@@ -45,7 +45,7 @@ plugins = "numpy.typing.mypy_plugin"
 [tool.ruff]
 line-length = 120
 indent-width = 4
-target-version = "py311"
+target-version = "py312"
 preview = true
 
 [tool.ruff.lint]
