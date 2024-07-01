@@ -1,3 +1,4 @@
+#include "threadpool.hpp"
 #include <bit>
 #include <pybind11/numpy.h>
 #include <pybind11/pybind11.h>
@@ -16,8 +17,9 @@ hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t,
     auto result = array_t<uint16_t>({ X_a.shape(0), Y_a.shape(0) });
     auto result_a = result.mutable_unchecked<2>();
 
-    for (py::ssize_t i = 0; i < X_a.shape(0); i++)
-    {
+    thread_pool pool;
+
+    pool.parallel_for_each(size_t(0), size_t(X_a.shape(0)), [&](size_t i, size_t _thread_idx) {
         for (py::ssize_t j = 0; j < Y_a.shape(0); j++)
         {
             using std::popcount;
@@ -27,7 +29,7 @@ hamming_distance_matrix(array_t<uint8_t, py::array::c_style> X, array_t<uint8_t,
                 + popcount(x[3] ^ y[3]) + popcount(x[4] ^ y[4]) + popcount(x[5] ^ y[5]) + popcount(x[6] ^ y[6])
                 + popcount(x[7] ^ y[7]);
         }
-    }
+    });
 
     return result;
 }
