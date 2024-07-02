@@ -33,3 +33,10 @@ class RegisterTestCase(unittest.TestCase):
         T, _loss = register.register_image(image1, template_image, "quadratic")
         registered_image = register.generate_warped_image(image1, template_image.shape, T)  # type: ignore
         Image.fromarray(registered_image).save("registered.png")
+
+    def test_register_image1_tps_transform(self) -> None:
+        template_image = np.asarray(Image.open("tests/assets/temp1.jpg").convert("L"))
+        image1 = np.asarray(Image.open("tests/assets/page1.jpg").convert("L"))
+        T, _loss = register.register_image(image1, template_image, "thin_plate_spline")
+        registered_image = register.generate_warped_image(image1, template_image.shape, T)  # type: ignore
+        Image.fromarray(registered_image).save("registered.png")

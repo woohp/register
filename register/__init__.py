@@ -127,11 +127,11 @@ def geman_mcclure_loss(d: f32Array, sigma: float) -> f32Array:
 
 def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transform]) -> tuple[f32Array, float]:
     samples: NDArray[np.int64] = np.array(
-        get_random_samples(A.shape[0], 4, N_ITERS_RANSAC, random.Random(4321)), dtype=np.int64
+        get_random_samples(Y.shape[0], transform.min_samples, N_ITERS_RANSAC, random.Random(4321)),
+        dtype=np.int64,
     )
 
-    b_A = A[samples]  # [batch-size, ...]
-    b_Y = Y[samples]  # [batch-size, samples, 2]
+    b_A, b_Y = transform.select(A, Y, samples)
 
     Ts = transform.estimate(b_A, b_Y, RANSAC_L2_REGULARIZATION)
 
