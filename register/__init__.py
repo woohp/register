@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 import random
+from collections.abc import Sequence
+from typing import cast
 
 import cv2
 import numpy as np
@@ -34,24 +34,23 @@ def register_image(image1: u8Array, image2: u8Array, method: method_type = "pers
 
 def resize_and_blur(image: u8Array) -> u8Array:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
-    image = cv2.GaussianBlur(image, (3, 3), 2, 2)
-    return image
+    return cast(u8Array, cv2.GaussianBlur(image, ksize=(3, 3), sigmaX=2.0, sigmaY=2.0))
 
 
 def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
     ratio = max_size / max(image.shape[:2])
     interpolation = cv2.INTER_AREA if ratio < 1 else cv2.INTER_CUBIC
-    return cv2.resize(image, (0, 0), None, ratio, ratio, interpolation)
+    return cast(u8Array, cv2.resize(image, (0, 0), None, ratio, ratio, interpolation))
 
 
 def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
-    detector = cv2.BRISK.create(None, 5)
-    processor = cv2.xfeatures2d.TEBLID_create(5.0, cv2.xfeatures2d.TEBLID_SIZE_512_BITS)
+    detector = cv2.BRISK.create(octaves=5)
+    processor = cv2.xfeatures2d.TEBLID.create(5.0, cv2.xfeatures2d.TEBLID_SIZE_512_BITS)
 
-    keypoints = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
+    keypoints: Sequence[cv2.KeyPoint] = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
     keypoints, descriptors = processor.compute(image, keypoints)
-    return np.array([kp.pt for kp in keypoints], dtype=np.float32) / TARGET_MAX_SIZE, descriptors
+    return np.array([kp.pt for kp in keypoints], dtype=np.float32) / TARGET_MAX_SIZE, cast(u8Array, descriptors)
 
 
 def do_match(
@@ -203,7 +202,7 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[1:] *= template_max_size / image_max_size
         T = np.roll(T, -1, axis=0).T
 
-        return cv2.warpAffine(image, T, out_size, cv2.INTER_AREA)
+        return cast(u8Array, cv2.warpAffine(image, T, dsize=out_size, flags=cv2.INTER_AREA))
 
     elif T.shape == (6, 2):
         # If this is a quadratic transformation, use cv2.remap
@@ -215,9 +214,9 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[1:] /= template_max_size
         T[3:] /= template_max_size
 
-        dest_grid = generate_quadratic_remap_maps(*template_shape, T)
+        map1, map2 = generate_quadratic_remap_maps(*template_shape, T)
 
-        return cv2.remap(image, *dest_grid, cv2.INTER_AREA)
+        return cast(u8Array, cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA))
 
     elif T.shape == (3, 3):
         # massage the transformation matrix a bit
@@ -226,7 +225,7 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[2] *= image_max_size
         T[:, -1] /= template_max_size
 
-        return cv2.warpPerspective(image, T.T, out_size, cv2.INTER_AREA)
+        return cast(u8Array, cv2.warpPerspective(image, T.T, dsize=out_size, flags=cv2.INTER_AREA))
 
     else:
         raise ValueError(f"unrecognized transformation: {T!r}")
