@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from ._ext import generate_quadratic_remap_maps, hamming_distance_matrix
+from .ext import generate_quadratic_remap_maps, hamming_distance_matrix
 from .transforms import QuadraticTransform, Transform, method_type
 from .utils import get_distance_squared
 from .utils.sampling import get_random_samples
@@ -61,7 +61,7 @@ def do_match(
 ) -> tuple[f32Array, f32Array, f32Array]:  # tuple of (X, Y, weights)
     # descriptors1: [M, 64]
     # descriptors2: [N, 64]
-    distances = hamming_distance_matrix(descriptors1, descriptors2)  # [M, N]
+    distances = hamming_distance_matrix(descriptors1.view(np.uint64), descriptors2.view(np.uint64))  # [M, N]
 
     x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]  # [M, 2]
     y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]  # [2, N]

@@ -1,7 +1,7 @@
 import math
 from random import Random
 
-from .. import _ext
+from .. import ext
 
 
 def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> list[list[int]]:
@@ -24,4 +24,4 @@ def xord(k: int, sk: int) -> list[int]:
     """
     Inverse function of ``ordx``, given output tuple size and compressed index.
     """
-    return [i + r for r, i in enumerate(_ext.sord(k, sk))]
+    return [i + r for r, i in enumerate(ext.sord(k, sk))]
