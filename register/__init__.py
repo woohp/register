@@ -6,9 +6,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .ext import generate_quadratic_remap_maps, hamming_distance_matrix
 from .transforms import QuadraticTransform, Transform, method_type
-from .utils import get_distance_squared
+from .utils import generate_quadratic_remap_maps, get_distance_squared, hamming_distance_matrix
 from .utils.sampling import get_random_samples
 
 TARGET_MAX_SIZE = 1_200
