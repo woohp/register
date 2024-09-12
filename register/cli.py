@@ -18,7 +18,6 @@ def main(
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
 
-    breakpoint()
     T, score = register_image(image, template, method)
     print("score:", score)
     print("T:")

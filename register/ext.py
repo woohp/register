@@ -46,7 +46,7 @@ def hamming_distance_matrix(X: NDArray[np.uint64], Y: NDArray[np.uint64]) -> NDA
     return result
 
 
-@numba.njit("f4[:, :, :](i4, i4, f4[:, :])", cache=True, fastmath=True, boundscheck=False, parallel=True)
+@numba.njit("f4[:, :, ::1](i4, i4, f4[:, ::1])", cache=True, fastmath=True, boundscheck=False, parallel=True)
 def generate_quadratic_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
     result = np.empty((2, height, width), dtype=np.float32)
 
