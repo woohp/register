@@ -5,6 +5,9 @@ version = "0.0.1"
 requires-python = ">=3.12"
 # readme = "README.md"
 
+[project.scripts]
+register-image = "register.cli:app"
+
 [build-system]
 requires = [
     "setuptools >= 65.5.1",
@@ -23,6 +26,9 @@ dev = [
 ]
 opencv = [
     "opencv-contrib-python-headless",
+]
+cli = [
+    "typer-slim>=0.12.5",
 ]
 
 [tool.setuptools.packages.find]
