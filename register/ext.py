@@ -3,11 +3,7 @@ import numpy as np
 from numba import types
 from numba.cpython import mathimpl
 from numba.extending import intrinsic
-
-# from numba.pycc import CC
 from numpy.typing import NDArray
-
-# cc = CC("ext2")
 
 
 @intrinsic
@@ -25,7 +21,6 @@ def popcount(x: int) -> int:
     return popcnt(x)
 
 
-# @cc.export("hamming_distance_matrix", "u2[:, :](u8[:, :], u8[:, :])")
 @numba.njit("u2[:, ::1](u8[:, ::1], u8[:, ::1])", fastmath=True, boundscheck=False, parallel=True, cache=True)
 def hamming_distance_matrix(X: NDArray[np.uint64], Y: NDArray[np.uint64]) -> NDArray[np.uint16]:
     result = np.empty((X.shape[0], Y.shape[0]), dtype=np.uint16)
