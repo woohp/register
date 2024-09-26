@@ -34,6 +34,11 @@ cli = [
 [tool.setuptools.packages.find]
 exclude = ["tests"]
 
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-s"
+testpaths = ["tests"]
+
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true
@@ -56,6 +61,6 @@ target-version = "py312"
 preview = true
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "U", "YTT", "B", "C4", "Q"]
-ignore = ["E203", "B028", "B905", "C408"]
+select = ["E", "F", "I", "U", "YTT", "B", "C4", "Q", "SIM"]
+ignore = ["E203", "B028", "B905", "C408", "SIM108"]
 preview = true
