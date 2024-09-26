@@ -19,10 +19,10 @@ def test_estimate_rigid_transform() -> None:
     # create some dummy data, and then apply the transformation to the data
     A = np.array(
         [
-            [1, 0, 1],
-            [1, 1, 0],
-            [1, -1, 0],
-            [1, 0, -1],
+            [1, 0.1, 1],
+            [1, 1, 0.2],
+            [1, -1, 0.3],
+            [1, -0.4, -1],
         ],
         dtype=np.float32,
     )
@@ -35,12 +35,33 @@ def test_estimate_rigid_transform() -> None:
     np.testing.assert_array_almost_equal(estimated_T, T, 6)
     assert estimated_T.dtype == np.float32
 
+    # if we add some scale to the transformation matrix, the rigid transformation can't handle it
+    T[1:] *= 2
+    Y = A @ T
+    estimated_T = register.transforms.RigidTransform.estimate(A, Y, 0.0)
+    assert not np.allclose(estimated_T, T, atol=1e-5)
+
+
+def test_estimate_rigid_transform_batched() -> None:
+    batch_size = 5
+    tx = np.random.uniform(-10, 10, (batch_size,))
+    ty = np.random.uniform(-10, 10, (batch_size,))
+    thetas = np.random.uniform(-np.pi, np.pi, (batch_size,))
+    T = np.array(
+        [
+            [tx, np.cos(thetas), -np.sin(thetas)],
+            [ty, np.sin(thetas), np.cos(thetas)],
+        ],
+        dtype=np.float32,
+    ).transpose(2, 1, 0)  # [batch-size, 3, 2]
+
     # it should also work for batched inputs
-    A = np.stack([A] * 5, axis=0)
-    Y = np.stack([Y] * 5, axis=0)
+    A = np.random.randn(batch_size, 91, 3).astype(np.float32)
+    A[..., 0] = 1
+    Y = A @ T
     estimated_T = register.transforms.RigidTransform.estimate(A, Y, 0.0)
     assert estimated_T.shape == (5, 3, 2)
-    np.testing.assert_array_almost_equal(estimated_T, T[None].repeat(len(A), axis=0), 6)
+    np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
 
 
@@ -61,10 +82,10 @@ def test_estimate_similarity_transform() -> None:
     # create some dummy data, and then apply the transformation to the data
     A = np.array(
         [
-            [1, 0, 1],
-            [1, 1, 0],
-            [1, -1, 0],
-            [1, 0, -1],
+            [1, 0.1, 1],
+            [1, 1, 0.2],
+            [1, -1, 0.3],
+            [1, -0.4, -1],
         ],
         dtype=np.float32,
     )
@@ -76,11 +97,26 @@ def test_estimate_similarity_transform() -> None:
     np.testing.assert_array_almost_equal(estimated_T, T, 6)
     assert estimated_T.dtype == np.float32
 
+
+def test_estimate_similarity_transform_batched() -> None:
+    batch_size = 5
+    tx = np.random.uniform(-10, 10, (batch_size,))
+    ty = np.random.uniform(-10, 10, (batch_size,))
+    thetas = np.random.uniform(-np.pi, np.pi, (batch_size,))
+    scales = np.random.uniform(-10, 10, (batch_size,))
+    T = np.array(
+        [
+            [tx, np.cos(thetas) * scales, -np.sin(thetas) * scales],
+            [ty, np.sin(thetas) * scales, np.cos(thetas) * scales],
+        ],
+        dtype=np.float32,
+    ).transpose(2, 1, 0)  # [batch-size, 3, 2]
+
     # it should also work for batched inputs
-    A = np.stack([A] * 5, axis=0)
-    Y = np.stack([Y] * 5, axis=0)
+    A = np.random.randn(batch_size, 91, 3).astype(np.float32)
+    A[..., 0] = 1
+    Y = A @ T
     estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
     assert estimated_T.shape == (5, 3, 2)
-    np.testing.assert_array_almost_equal(estimated_T, T[None].repeat(len(A), axis=0), 6)
+    np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
-

@@ -105,6 +105,7 @@ class SimilarityTransform(AffineTransform):
         https://graphics.stanford.edu/~smr/ICP/comparison/eggert_comparison_mva97.pdf
 
     """
+
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         src_xy = A[..., 1:]
@@ -131,7 +132,7 @@ class SimilarityTransform(AffineTransform):
         Vt[needs_inverting, -1, :] *= -1
         R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
 
-        t = dst_center[..., 0, :] - (R @ src_center.swapaxes(-2, -1))[..., 0]
+        t = dst_center[..., 0, :] - ((scale * R) @ src_center.swapaxes(-2, -1))[..., 0]
 
         # Construct the full transformation matrix
         return np.concatenate([t[..., None, :], scale * R.swapaxes(-2, -1)], axis=-2)
