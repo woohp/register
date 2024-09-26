@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 import numba
@@ -13,8 +14,15 @@ def numba_njit[F](*args: Any, **kwargs: Any) -> Callable[[F], F]:
     return numba.njit(*args, **kwargs)
 
 
+nb_f32array = partial(types.Array, types.float32)
+
+
 @numba_njit(
-    ["f4[::1](f4[:, ::1], f4[:, ::1])", "f4[:, ::1](f4[:, :, :], f4[:, :, :])"],
+    [
+        nb_f32array(1, "C")(nb_f32array(2, "C", readonly=True), nb_f32array(2, "C", readonly=True)),
+        nb_f32array(2, "C")(nb_f32array(3, "C", readonly=True), nb_f32array(3, "C", readonly=True)),
+        nb_f32array(2, "C")(nb_f32array(3, "C", readonly=True), nb_f32array(2, "C", readonly=True)),
+    ],
     cache=True,
     fastmath=True,
     boundscheck=False,
@@ -38,18 +46,32 @@ def get_distance_squared(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDAr
 
     else:
         distances = np.empty((x.shape[0], x.shape[1]), dtype=x.dtype)
-        for i in numba.prange(x.shape[0]):
-            for j in numba.prange(x.shape[1]):
-                d = 0.0
-                for k in numba.prange(dim):
-                    d += (x[i, j, k] - y[i, j, k]) ** 2
-                distances[i, j] = d
+
+        if y.ndim == 2:
+            for i in numba.prange(x.shape[0]):
+                for j in numba.prange(x.shape[1]):
+                    d = 0.0
+                    for k in numba.prange(dim):
+                        d += (x[i, j, k] - y[j, k]) ** 2
+                    distances[i, j] = d
+
+        elif y.ndim == 3:
+            distances = np.empty((x.shape[0], x.shape[1]), dtype=x.dtype)
+            for i in numba.prange(x.shape[0]):
+                for j in numba.prange(x.shape[1]):
+                    d = 0.0
+                    for k in numba.prange(dim):
+                        d += (x[i, j, k] - y[i, j, k]) ** 2
+                    distances[i, j] = d
 
     return distances
 
 
 @numba_njit(
-    ["f4[:, ::1](f4[:, :], f4[:, :])", "f4[:, :, ::1](f4[:, :, :], f4[:, :, :])"],
+    [
+        nb_f32array(2, "C")(nb_f32array(2, "A", readonly=True), nb_f32array(2, "A", readonly=True)),
+        nb_f32array(3, "C")(nb_f32array(3, "A", readonly=True), nb_f32array(3, "A", readonly=True)),
+    ],
     cache=True,
     fastmath=True,
     boundscheck=False,
