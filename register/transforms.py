@@ -9,7 +9,7 @@ from numpy.typing import NDArray
 from .utils import get_pairwise_distances_squared
 
 FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
-method_type = Literal["perspective", "affine", "quadratic", "thin_plate_spline"]
+method_type = Literal["perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline"]
 
 
 class Transform(ABC):
@@ -38,16 +38,21 @@ class Transform(ABC):
 
     @staticmethod
     def get_transform(method: method_type) -> type[Transform]:
-        if method == "perspective":
-            return PerspectiveTransform
-        elif method == "affine":
-            return AffineTransform
-        elif method == "quadratic":
-            return QuadraticTransform
-        elif method == "thin_plate_spline":
-            return ThinPlateSplineTransform
-        else:
-            raise ValueError(f"unrecognized method: {method_type!r}")
+        match method:
+            case "perspective":
+                return PerspectiveTransform
+            case "affine":
+                return AffineTransform
+            case "rigid":
+                return RigidTransform
+            case "similarity":
+                return SimilarityTransform
+            case "quadratic":
+                return QuadraticTransform
+            case "thin_plate_spline":
+                return ThinPlateSplineTransform
+            case _:
+                raise ValueError(f"unrecognized method: {method_type!r}")
 
 
 def poly_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
@@ -87,6 +92,82 @@ class AffineTransform(PolynomialTransform):
     @staticmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         return poly_expand(X, 1)
+
+
+class SimilarityTransform(AffineTransform):
+    """A similarity transform is a subgroup of the affine transform that allows for translation, rotation, uniform
+    scaling, and reflection.
+
+    See:
+        https://en.wikipedia.org/wiki/Similarity_(geometry)
+        https://math.stackexchange.com/a/3789053
+        https://ecommons.udayton.edu/cgi/viewcontent.cgi?article=1173&context=mee_fac_pub
+        https://graphics.stanford.edu/~smr/ICP/comparison/eggert_comparison_mva97.pdf
+
+    """
+    @staticmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        src_xy = A[..., 1:]
+        dst_xy = Y
+
+        src_center = np.mean(src_xy, axis=-2, keepdims=True)
+        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
+        src_centered = src_xy - src_center
+        dst_centered = dst_xy - dst_center
+
+        src_scale = np.sqrt(np.sum(src_centered**2, axis=(-2, -1), keepdims=True) / A.shape[-2])
+        dst_scale = np.sqrt(np.sum(dst_centered**2, axis=(-2, -1), keepdims=True) / Y.shape[-2])
+        scale = dst_scale / src_scale
+
+        src_normalized = src_centered / src_scale
+        dst_normalized = dst_centered / dst_scale
+
+        H = src_normalized.swapaxes(-2, -1) @ dst_normalized
+        U, _, Vt = np.linalg.svd(H)
+        R = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+
+        # Ensure a proper rotation matrix (determinant = 1)
+        needs_inverting = np.linalg.det(R) < 0
+        Vt[needs_inverting, -1, :] *= -1
+        R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
+
+        t = dst_center[..., 0, :] - (R @ src_center.swapaxes(-2, -1))[..., 0]
+
+        # Construct the full transformation matrix
+        return np.concatenate([t[..., None, :], scale * R.swapaxes(-2, -1)], axis=-2)
+
+
+class RigidTransform(SimilarityTransform):
+    @staticmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        src_xy = A[..., 1:]
+        dst_xy = Y
+
+        # Compute centroids
+        src_centroid = np.mean(src_xy, axis=-2, keepdims=True)
+        dst_centroid = np.mean(dst_xy, axis=-2, keepdims=True)
+
+        # Center the points
+        src_centered = src_xy - src_centroid
+        dst_centered = dst_xy - dst_centroid
+
+        # Compute the covariance matrix
+        H = src_centered.swapaxes(-2, -1) @ dst_centered
+
+        # Compute the optimal rotation using SVD
+        U, _, Vt = np.linalg.svd(H)
+        R = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+
+        # Ensure a proper rotation matrix (determinant = 1)
+        needs_inverting = np.linalg.det(R) < 0
+        Vt[needs_inverting, -1, :] *= -1
+        R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
+
+        # Compute the translation
+        t = dst_centroid[..., 0, :] - (R @ src_centroid.swapaxes(-2, -1))[..., 0]
+
+        # Construct the full transformation matrix
+        return np.concatenate([t[..., None, :], R.swapaxes(-2, -1)], axis=-2)
 
 
 class QuadraticTransform(PolynomialTransform):
