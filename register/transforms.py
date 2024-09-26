@@ -107,53 +107,32 @@ class SimilarityTransform(AffineTransform):
     """
 
     @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        src_xy = A[..., 1:]
-        dst_xy = Y
-
-        src_center = np.mean(src_xy, axis=-2, keepdims=True)
-        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
-        src_centered = src_xy - src_center
-        dst_centered = dst_xy - dst_center
-
-        src_scale = np.sqrt(np.sum(src_centered**2, axis=(-2, -1), keepdims=True) / A.shape[-2])
-        dst_scale = np.sqrt(np.sum(dst_centered**2, axis=(-2, -1), keepdims=True) / Y.shape[-2])
-        scale = dst_scale / src_scale
-
-        src_normalized = src_centered / src_scale
-        dst_normalized = dst_centered / dst_scale
-
-        H = src_normalized.swapaxes(-2, -1) @ dst_normalized
-        U, _, Vt = np.linalg.svd(H)
-        R = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
-
-        # Ensure a proper rotation matrix (determinant = 1)
-        needs_inverting = np.linalg.det(R) < 0
-        Vt[needs_inverting, -1, :] *= -1
-        R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
-
-        t = dst_center[..., 0, :] - ((scale * R) @ src_center.swapaxes(-2, -1))[..., 0]
-
-        # Construct the full transformation matrix
-        return np.concatenate([t[..., None, :], scale * R.swapaxes(-2, -1)], axis=-2)
-
-
-class RigidTransform(SimilarityTransform):
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+    def _estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float, compute_scale: bool) -> FloatingNDArray:
         src_xy = A[..., 1:]
         dst_xy = Y
 
         # Compute centroids
-        src_centroid = np.mean(src_xy, axis=-2, keepdims=True)
-        dst_centroid = np.mean(dst_xy, axis=-2, keepdims=True)
+        src_center: FloatingNDArray = np.mean(src_xy, axis=-2, keepdims=True)
+        dst_center: FloatingNDArray = np.mean(dst_xy, axis=-2, keepdims=True)
 
         # Center the points
-        src_centered = src_xy - src_centroid
-        dst_centered = dst_xy - dst_centroid
+        src_centered = src_xy - src_center
+        dst_centered = dst_xy - dst_center
+
+        if compute_scale:
+            src_scale: FloatingNDArray = np.sqrt(np.sum(src_centered**2, axis=(-2, -1), keepdims=True) / A.shape[-2])
+            dst_scale: FloatingNDArray = np.sqrt(np.sum(dst_centered**2, axis=(-2, -1), keepdims=True) / Y.shape[-2])
+            scale = dst_scale / src_scale
+
+            src_normalized = src_centered / src_scale
+            dst_normalized = dst_centered / dst_scale
+
+        else:
+            src_normalized = src_centered
+            dst_normalized = dst_centered
 
         # Compute the covariance matrix
-        H = src_centered.swapaxes(-2, -1) @ dst_centered
+        H = src_normalized.swapaxes(-2, -1) @ dst_normalized
 
         # Compute the optimal rotation using SVD
         U, _, Vt = np.linalg.svd(H)
@@ -164,11 +143,24 @@ class RigidTransform(SimilarityTransform):
         Vt[needs_inverting, -1, :] *= -1
         R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
 
-        # Compute the translation
-        t = dst_centroid[..., 0, :] - (R @ src_centroid.swapaxes(-2, -1))[..., 0]
+        if compute_scale:
+            R *= scale
+
+        # compute the translation
+        t = dst_center[..., 0, :] - (R @ src_center.swapaxes(-2, -1))[..., 0]
 
         # Construct the full transformation matrix
         return np.concatenate([t[..., None, :], R.swapaxes(-2, -1)], axis=-2)
+
+    @staticmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        return SimilarityTransform._estimate(A, Y, lamb, compute_scale=True)
+
+
+class RigidTransform(SimilarityTransform):
+    @staticmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        return SimilarityTransform._estimate(A, Y, lamb, compute_scale=False)
 
 
 class QuadraticTransform(PolynomialTransform):
