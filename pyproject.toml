@@ -52,7 +52,6 @@ extra_checks = true
 allow_untyped_defs = false
 allow_any_generics = false
 plugins = "numpy.typing.mypy_plugin"
-enable_incomplete_feature = "NewGenericSyntax"
 
 [tool.ruff]
 line-length = 120
