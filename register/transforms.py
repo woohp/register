@@ -153,9 +153,7 @@ class SimilarityTransform(AffineTransform):
             if np.any(needs_inverting):
                 Vt_copy = Vt.copy()
                 Vt_copy[needs_inverting, -1, :] *= -1
-                R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(
-                    -2, -1
-                )
+                R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
 
             M = R_rot.swapaxes(-2, -1)
 
