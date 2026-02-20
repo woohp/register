@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 from register.utils import get_distance_squared, get_pairwise_distances_squared
 
@@ -11,7 +12,7 @@ from register.utils import get_distance_squared, get_pairwise_distances_squared
         (3, 5, 4),
     ],
 )
-def test_get_distance_squared(batch_size, num_points, dim) -> None:
+def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int) -> None:
     shape = (num_points, dim) if batch_size is None else (batch_size, num_points, dim)
     x = np.random.normal(0, 1, shape).astype(np.float32)
     y = np.random.normal(0, 1, shape).astype(np.float32)
@@ -27,12 +28,15 @@ def test_get_distance_squared(batch_size, num_points, dim) -> None:
         (3, 5, 7, 4),
     ],
 )
-def test_get_pairwise_distances_squared(batch_size, n, m, dim) -> None:
+def test_get_pairwise_distances_squared(batch_size: int | None, n: int, m: int, dim: int) -> None:
     x_shape = (n, dim) if batch_size is None else (batch_size, n, dim)
     y_shape = (m, dim) if batch_size is None else (batch_size, m, dim)
 
     x = np.random.normal(0, 1, x_shape).astype(np.float32)
     y = np.random.normal(0, 1, y_shape).astype(np.float32)
+
+    expected: NDArray[np.float32]
+    expected_shape: tuple[int, ...]
 
     if batch_size is None:
         expected = np.sum((x[:, None] - y[None]) ** 2, axis=-1)

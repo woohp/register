@@ -1,8 +1,10 @@
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 from PIL import Image
 
 import register
+import register.transforms
 
 
 def test_register_against_self_should_produce_identity_transformation() -> None:
@@ -23,8 +25,8 @@ def test_register_against_self_should_produce_identity_transformation() -> None:
         pytest.param("thin_plate_spline", marks=pytest.mark.xfail(reason="currently broken")),
     ],
 )
-def test_register_image1_transforms(images, method) -> None:
+def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], method: str) -> None:
     image1, template_image = images
-    T, _loss = register.register_image(image1, template_image, method)
-    registered_image = register.generate_warped_image(image1, template_image.shape, T)  # type: ignore
+    T, _loss = register.register_image(image1, template_image, method)  # type: ignore
+    registered_image: NDArray[np.uint8] = register.generate_warped_image(image1, template_image.shape, T)
     Image.fromarray(registered_image).save(f"registered_{method}.png")

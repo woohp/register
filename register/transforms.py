@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal, TypeVar
+from typing import Literal, TypeVar, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -79,7 +79,8 @@ class PolynomialTransform(Transform):
         # solve regularized least squares
         # https://stackoverflow.com/questions/27476933/numpy-linear-regression-with-regularization
         A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + lamb * np.identity(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        res = np.linalg.solve(A_T @ A + lamb * np.identity(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        return cast("FloatingNDArray", res)
 
     @staticmethod
     def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
@@ -222,7 +223,7 @@ class ThinPlateSplineTransform(Transform):
 
     @staticmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        pairwise_distance_squared = get_pairwise_distances_squared(X, Y)
+        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), Y.astype(np.float32))
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
 
         P = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
@@ -254,7 +255,7 @@ class ThinPlateSplineTransform(Transform):
         X_old = T[..., :-3, -2:]
         X_new = A[:-3, -2:]
 
-        pairwise_distance_squared = get_pairwise_distances_squared(X_new, X_old)
+        pairwise_distance_squared = get_pairwise_distances_squared(X_new.astype(np.float32), X_old.astype(np.float32))
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
         P = np.pad(X_new, [(0, 0)] * (X_new.ndim - 1) + [(1, 0)], constant_values=1)[None].repeat(T.shape[0], axis=0)
 

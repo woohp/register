@@ -1,18 +1,26 @@
+import math
+
 import numpy as np
 import pytest
+from numpy.typing import NDArray
 
 import register.transforms
 
 
 @pytest.mark.parametrize("batch_size", [None, 5])
-def test_estimate_rigid_transform(batch_size) -> None:
+def test_estimate_rigid_transform(batch_size: int | None) -> None:
+    T: NDArray[np.float32]
+    A: NDArray[np.float32]
+    expected_shape: tuple[int, ...]
+
     if batch_size is None:
         theta = 1.234
-        tx, ty = -3, 5
+        tx_val: float = -3.0
+        ty_val: float = 5.0
         T = np.array(
             [
-                [tx, np.cos(theta), -np.sin(theta)],
-                [ty, np.sin(theta), np.cos(theta)],
+                [tx_val, math.cos(theta), -math.sin(theta)],
+                [ty_val, math.sin(theta), math.cos(theta)],
             ],
             dtype=np.float32,
         ).T
@@ -49,15 +57,20 @@ def test_estimate_rigid_transform(batch_size) -> None:
 
 
 @pytest.mark.parametrize("batch_size", [None, 5])
-def test_estimate_similarity_transform(batch_size) -> None:
+def test_estimate_similarity_transform(batch_size: int | None) -> None:
+    T: NDArray[np.float32]
+    A: NDArray[np.float32]
+    expected_shape: tuple[int, ...]
+
     if batch_size is None:
         theta = 1.234
-        tx, ty = -3, 5
+        tx_val: float = -3.0
+        ty_val: float = 5.0
         scale = 0.123
         T = np.array(
             [
-                [tx, np.cos(theta) * scale, -np.sin(theta) * scale],
-                [ty, np.sin(theta) * scale, np.cos(theta) * scale],
+                [tx_val, math.cos(theta) * scale, -math.sin(theta) * scale],
+                [ty_val, math.sin(theta) * scale, math.cos(theta) * scale],
             ],
             dtype=np.float32,
         ).T
@@ -89,12 +102,13 @@ def test_estimate_similarity_transform(batch_size) -> None:
 
 def test_aniostropic_similarity_transform() -> None:
     theta = 1.234
-    tx, ty = -3, 5
+    tx: float = -3.0
+    ty: float = 5.0
     scale1, scale2 = 0.123, 0.456
     T = np.array(
         [
-            [tx, np.cos(theta) * scale1, -np.sin(theta) * scale1],
-            [ty, np.sin(theta) * scale2, np.cos(theta) * scale2],
+            [tx, math.cos(theta) * scale1, -math.sin(theta) * scale1],
+            [ty, math.sin(theta) * scale2, math.cos(theta) * scale2],
         ],
         dtype=np.float32,
     ).T

@@ -49,7 +49,9 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     keypoints: Sequence[cv2.KeyPoint] = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
     keypoints, descriptors = processor.compute(image, keypoints)
-    return np.array([kp.pt for kp in keypoints], dtype=np.float32) / TARGET_MAX_SIZE, cast(u8Array, descriptors)
+    keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+    keypoints_array /= TARGET_MAX_SIZE
+    return keypoints_array, cast(u8Array, descriptors)
 
 
 def do_match(
