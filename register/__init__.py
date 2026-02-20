@@ -6,8 +6,13 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .transforms import QuadraticTransform, Transform, method_type
-from .utils import generate_quadratic_remap_maps, get_distance_squared, hamming_distance_matrix
+from .transforms import QuadraticTransform, ThinPlateSplineTransform, Transform, method_type
+from .utils import (
+    generate_quadratic_remap_maps,
+    generate_tps_remap_maps,
+    get_distance_squared,
+    hamming_distance_matrix,
+)
 from .utils.sampling import get_random_samples
 
 TARGET_MAX_SIZE = 1_200
@@ -28,7 +33,13 @@ def register_image(image1: u8Array, image2: u8Array, method: method_type = "pers
     keypoints2, descriptors2 = detect_features(image2)
 
     X, Y, weights = do_match(keypoints1, descriptors1, keypoints2, descriptors2)
-    return find_transformation(X, Y, weights, Transform.get_transform(method))
+    transform_type = Transform.get_transform(method)
+
+    if transform_type is ThinPlateSplineTransform:
+        # For TPS, we estimate the mapping from target to source because TPS is not easily invertible
+        return find_transformation(Y, X, weights, transform_type)
+
+    return find_transformation(X, Y, weights, transform_type)
 
 
 def resize_and_blur(image: u8Array) -> u8Array:
@@ -164,9 +175,11 @@ def irls(
 
     for _ in range(N_ITERS_IRLS):
         # estimate a new transformation using the current weights
-        w = w.reshape([-1] + [1] * (A.ndim - 1))
-        WA = A * w
-        WY = Y * w
+        w_ext = np.ones((A.shape[0],) + w.shape[1:], dtype=w.dtype)
+        w_ext[: w.shape[0]] = w
+        w_reshaped = w_ext.reshape([-1] + [1] * (A.ndim - 1))
+        WA = A * w_reshaped
+        WY = np.pad(Y, [(0, A.shape[0] - Y.shape[0]), (0, 0)], constant_values=0) * w_reshaped
         T = transform.estimate(WA, WY, 0.0)
 
         # measure how good the new transformation is
@@ -227,6 +240,16 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[:, -1] /= template_max_size
 
         return cast(u8Array, cv2.warpPerspective(image, T.T, dsize=out_size, flags=cv2.INTER_AREA))
+
+    elif T.ndim == 2 and T.shape[1] == 4:
+        # Thin Plate Spline
+        # T was estimated as target -> source
+        T = T.astype(np.float32)
+        map1, map2 = generate_tps_remap_maps(*template_shape, T)
+        map1 *= image_max_size
+        map2 *= image_max_size
+
+        return cast(u8Array, cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA))
 
     else:
         raise ValueError(f"unrecognized transformation: {T!r}")

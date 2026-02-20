@@ -119,3 +119,29 @@ def test_aniostropic_similarity_transform() -> None:
 
     estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
     np.testing.assert_array_almost_equal(estimated_T, T, 6)
+
+
+@pytest.mark.parametrize("batch_size", [None, 5])
+def test_estimate_thin_plate_spline_transform(batch_size: int | None) -> None:
+    num_points = 50
+    if batch_size is None:
+        X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
+        Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
+        A = register.transforms.ThinPlateSplineTransform.expand(X, Y)
+        estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A, Y, 0.0)
+        Y_hat = register.transforms.ThinPlateSplineTransform.transform(A, estimated_T)
+        np.testing.assert_array_almost_equal(Y_hat, Y, 4)
+    else:
+        X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
+        Y = X[None].repeat(batch_size, axis=0) + np.random.normal(0, 0.01, (batch_size, num_points, 2)).astype(
+            np.float32
+        )
+        A_init = register.transforms.ThinPlateSplineTransform.expand(X, Y[0])
+        # In RANSAC, A is often just the expanded version of ALL points
+        # But estimate/transform should handle whatever is passed.
+        # Let's test the batch estimate
+        # Note: estimate expects A and Y to Have same batch dimension if A is 3D
+        A_batched = A_init[None].repeat(batch_size, axis=0)
+        estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A_batched, Y, 0.0)
+        Y_hat = register.transforms.ThinPlateSplineTransform.transform(A_batched, estimated_T)
+        np.testing.assert_array_almost_equal(Y_hat, Y, 4)

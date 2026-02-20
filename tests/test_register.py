@@ -22,7 +22,7 @@ def test_register_against_self_should_produce_identity_transformation() -> None:
         "rigid",
         "similarity",
         "quadratic",
-        pytest.param("thin_plate_spline", marks=pytest.mark.xfail(reason="currently broken")),
+        "thin_plate_spline",
     ],
 )
 def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], method: str) -> None:

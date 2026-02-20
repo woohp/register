@@ -159,3 +159,45 @@ def generate_quadratic_remap_maps(height: int, width: int, T: NDArray[np.float32
             result[1, y, x] = T[0, 1] + T[1, 1] * x + T[2, 1] * y + T[3, 1] * xx + T[4, 1] * xy + T[5, 1] * yy
 
     return result
+
+
+@numba_njit("f4[:, :, ::1](i4, i4, f4[:, ::1])", cache=True, fastmath=True, boundscheck=False, parallel=True)
+def generate_tps_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
+    # T: [N+3, 4]
+    # first 2 cols: weights and affine coeffs
+    # last 2 cols: control points (first N rows)
+    num_points = T.shape[0] - 3
+    W = T[:num_points, :2]
+    ab = T[num_points:, :2]
+    P = T[:num_points, 2:]
+
+    result = np.empty((2, height, width), dtype=np.float32)
+
+    for y in numba.prange(height):
+        # normalize y to [0, 1] relative to template max size ???
+        # Actually T was estimated on normalized coordinates [0, 1]
+        # So we need to normalize pixel coordinates
+        max_dim = float(max(height, width))
+        fy = float(y) / max_dim
+
+        for x in numba.prange(width):
+            fx = float(x) / max_dim
+
+            # 1. Base affine part
+            out_x = ab[0, 0] + ab[1, 0] * fx + ab[2, 0] * fy
+            out_y = ab[0, 1] + ab[1, 1] * fx + ab[2, 1] * fy
+
+            # 2. Kernel part
+            for i in range(num_points):
+                dx = fx - P[i, 0]
+                dy = fy - P[i, 1]
+                r2 = dx * dx + dy * dy
+                if r2 > 1e-10:
+                    u = r2 * np.log(r2)
+                    out_x += W[i, 0] * u
+                    out_y += W[i, 1] * u
+
+            result[0, y, x] = out_x
+            result[1, y, x] = out_y
+
+    return result

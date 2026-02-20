@@ -223,15 +223,16 @@ class ThinPlateSplineTransform(Transform):
 
     @staticmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), Y.astype(np.float32))
+        # X: [..., N, 2]
+        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
 
         P = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
         zeros = np.zeros((*X.shape[:-2], 3, 3), dtype=X.dtype)
-        A = np.block([
-            [K, P],
-            [P.swapaxes(-1, -2), zeros],
-        ])
+
+        A_top = np.concatenate([K, P], axis=-1)
+        A_bottom = np.concatenate([P.swapaxes(-1, -2), zeros], axis=-1)
+        A = np.concatenate([A_top, A_bottom], axis=-2)
 
         return A
 
@@ -239,25 +240,55 @@ class ThinPlateSplineTransform(Transform):
     def select(
         A: FloatingNDArray, Y: FloatingNDArray, samples: NDArray[np.int64]
     ) -> tuple[FloatingNDArray, FloatingNDArray]:
-        X = A[:-3, -2:]
+        # A is [N+3, N+3], Y is [N, 2]
+        # We need to extract X from A or re-expand
+        # A was returned by expand(X, Y), so K = A[..., :-3, :-3], P = A[..., :-3, -3:]
+        # Actually, it's easier to just pass X around or reconstruct it from P
+        X = A[..., :-3, -2:]
         Y_sampled = Y[samples]
         A_sampled = ThinPlateSplineTransform.expand(X[samples], Y_sampled)
         return A_sampled, Y_sampled
 
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
-        T = np.linalg.solve(A, Y_aug)
-        return np.concatenate([T, A[:, :, -2:]], axis=-1)
+        if Y.shape[-2] != A.shape[-1]:
+            Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
+        else:
+            Y_aug = Y
+        T = np.linalg.solve(A + lamb * np.identity(A.shape[-1], dtype=A.dtype), Y_aug)
+        X = A[..., :-3, -2:]
+        # T: [..., N+3, 2]
+        # We append X so that transform() knows the control points
+        X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])
+        return np.concatenate([T, X_padded], axis=-1)
 
     @staticmethod
     def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
+        # A is the expanded version of X_new, but for TPS expand(X, Y) returns the full matrix.
+        # In find_transformation, A is passed to irls and ransac.
+        # X_new is A[..., :-3, -2:]
+        X_new = A[..., :-3, -2:]
+        # T: [Optional Batch, N+3, 4] where last 2 cols are X_old
         X_old = T[..., :-3, -2:]
-        X_new = A[:-3, -2:]
+        W = T[..., :-3, :2]
+        ab = T[..., -3:, :2]
 
-        pairwise_distance_squared = get_pairwise_distances_squared(X_new.astype(np.float32), X_old.astype(np.float32))
+        if T.ndim == 3:
+            # RANSAC/Batch case
+            X_new_batch = X_new[None].repeat(T.shape[0], axis=0) if X_new.ndim == 2 else X_new
+            pairwise_distance_squared = get_pairwise_distances_squared(
+                X_new_batch.astype(np.float32), X_old.astype(np.float32)
+            )
+        else:
+            pairwise_distance_squared = get_pairwise_distances_squared(
+                X_new.astype(np.float32), X_old.astype(np.float32)
+            )
+
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
-        P = np.pad(X_new, [(0, 0)] * (X_new.ndim - 1) + [(1, 0)], constant_values=1)[None].repeat(T.shape[0], axis=0)
+        P = np.pad(X_new, [(0, 0)] * (X_new.ndim - 1) + [(1, 0)], constant_values=1)
 
-        T = T[..., :-2]
-        return (K @ T[..., :-3, :]) + (P @ T[..., -3:, :])
+        if T.ndim == 3:
+            P_for_matmul = P[None] if P.ndim == 2 else P
+            return (K @ W) + (P_for_matmul @ ab)
+        else:
+            return (K @ W) + (P @ ab)
