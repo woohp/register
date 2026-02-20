@@ -120,3 +120,36 @@ def test_estimate_similarity_transform_batched() -> None:
     assert estimated_T.shape == (5, 3, 2)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
+
+
+def test_aniostropic_similarity_transform() -> None:
+    # construct a rigid transformation matrix
+    theta = 1.234
+    tx = -3
+    ty = 5
+    scale1 = 0.123
+    scale2 = 0.456
+    T = np.array(
+        [
+            [tx, np.cos(theta) * scale1, -np.sin(theta) * scale1],
+            [ty, np.sin(theta) * scale2, np.cos(theta) * scale2],
+        ],
+        dtype=np.float32,
+    ).T
+
+    # create some dummy data, and then apply the transformation to the data
+    A = np.array(
+        [
+            [1, 0.1, 1],
+            [1, 1, 0.2],
+            [1, -1, 0.3],
+            [1, -0.4, -1],
+        ],
+        dtype=np.float32,
+    )
+    A[:, 0] = 1
+    Y = A @ T
+
+    # the estimated transformation should be the same as the true one
+    estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
+    np.testing.assert_array_almost_equal(estimated_T, T, 6)

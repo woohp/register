@@ -120,37 +120,50 @@ class SimilarityTransform(AffineTransform):
         dst_centered = dst_xy - dst_center
 
         if compute_scale:
-            src_scale: FloatingNDArray = np.sqrt(np.sum(src_centered**2, axis=(-2, -1), keepdims=True) / A.shape[-2])
-            dst_scale: FloatingNDArray = np.sqrt(np.sum(dst_centered**2, axis=(-2, -1), keepdims=True) / Y.shape[-2])
-            scale = dst_scale / src_scale
+            # 5-DOF Anisotropic Similarity estimation: translation, rotation, and 2 scales (no shear).
+            # We first solve for an unrestricted affine transformation on centered points.
+            # (src_centered.T @ src_centered) @ M = (src_centered.T @ dst_centered)
+            SXX = src_centered.swapaxes(-2, -1) @ src_centered
+            SXY = src_centered.swapaxes(-2, -1) @ dst_centered
 
-            src_normalized = src_centered / src_scale
-            dst_normalized = dst_centered / dst_scale
+            # Solve for M_aff using regularized least squares for stability
+            Id = np.identity(2, dtype=A.dtype)
+            M_aff = np.linalg.solve(SXX + (lamb + 1e-8) * Id, SXY)
+
+            # Project M_aff to the closest 5-DOF transform: M = [ [s1*c, s2*s], [-s1*s, s2*c] ]
+            theta = np.arctan2(M_aff[..., 0, 1] - M_aff[..., 1, 0], M_aff[..., 1, 1] + M_aff[..., 0, 0])
+            c, s = np.cos(theta), np.sin(theta)
+
+            s1 = M_aff[..., 0, 0] * c - M_aff[..., 1, 0] * s
+            s2 = M_aff[..., 1, 1] * c + M_aff[..., 0, 1] * s
+
+            M = np.stack(
+                [np.stack([s1 * c, s2 * s], axis=-1), np.stack([-s1 * s, s2 * c], axis=-1)],
+                axis=-2,
+            )
 
         else:
-            src_normalized = src_centered
-            dst_normalized = dst_centered
+            # 3-DOF Rigid estimation (Umeyama/SVD)
+            H = src_centered.swapaxes(-2, -1) @ dst_centered
+            U, _, Vt = np.linalg.svd(H)
+            R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
 
-        # Compute the covariance matrix
-        H = src_normalized.swapaxes(-2, -1) @ dst_normalized
+            # Ensure a proper rotation matrix (determinant = 1)
+            needs_inverting = np.linalg.det(R_rot) < 0
+            if np.any(needs_inverting):
+                Vt_copy = Vt.copy()
+                Vt_copy[needs_inverting, -1, :] *= -1
+                R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(
+                    -2, -1
+                )
 
-        # Compute the optimal rotation using SVD
-        U, _, Vt = np.linalg.svd(H)
-        R = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
-
-        # Ensure a proper rotation matrix (determinant = 1)
-        needs_inverting = np.linalg.det(R) < 0
-        Vt[needs_inverting, -1, :] *= -1
-        R[needs_inverting] = Vt[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
-
-        if compute_scale:
-            R *= scale
+            M = R_rot.swapaxes(-2, -1)
 
         # compute the translation
-        t = dst_center[..., 0, :] - (R @ src_center.swapaxes(-2, -1))[..., 0]
+        t = dst_center - src_center @ M
 
         # Construct the full transformation matrix
-        return np.concatenate([t[..., None, :], R.swapaxes(-2, -1)], axis=-2)
+        return np.concatenate([t, M], axis=-2)
 
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
