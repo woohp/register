@@ -1,65 +1,64 @@
 [project]
-name = "register"
 description = "Image Registration"
+name = "register"
+requires-python = ">=3.14"
 version = "0.0.1"
-requires-python = ">=3.12"
 # readme = "README.md"
 
 [project.scripts]
 register-image = "register.cli:app"
 
 [build-system]
-requires = [
-    "setuptools >= 65.5.1",
-    "wheel",
-    "numba>=0.60",
-    "numpy<2",
-]
 build-backend = "setuptools.build_meta"
+requires = [
+    "numba>=0.64.0",
+    "numpy>=2.4.2",
+    "setuptools >= 82.0.0",
+    "wheel",
+]
 
 [project.optional-dependencies]
+cli = [
+    "typer-slim>=0.24.0",
+]
 dev = [
     "ipdb",
-    "mypy >= 1.11",
+    "mypy >= 1.19.1",
     "pytest",
     "ruff",
 ]
 opencv = [
     "opencv-contrib-python-headless",
 ]
-cli = [
-    "typer-slim>=0.12.5",
-]
 
 [tool.setuptools.packages.find]
 exclude = ["tests"]
 
 [tool.pytest.ini_options]
-minversion = "6.0"
 addopts = "-s"
+minversion = "6.0"
 testpaths = ["tests"]
 
 [tool.mypy]
-python_version = "3.12"
-ignore_missing_imports = true
+allow_any_generics = false
+allow_untyped_defs = false
 check_untyped_defs = true
+extra_checks = true
+ignore_missing_imports = true
 no_implicit_optional = true
+python_version = "3.14"
+strict_equality = true
+warn_redundant_casts = true
 warn_unreachable = true
 warn_unused_ignores = true
-warn_redundant_casts = true
-strict_equality = true
-extra_checks = true
-allow_untyped_defs = false
-allow_any_generics = false
-plugins = "numpy.typing.mypy_plugin"
 
 [tool.ruff]
-line-length = 120
 indent-width = 4
-target-version = "py312"
+line-length = 120
 preview = true
+target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "U", "YTT", "B", "C4", "Q", "SIM"]
-ignore = ["E203", "B028", "B905", "C408", "SIM108"]
+ignore = ["B028", "B905", "C408", "E203", "SIM102", "SIM108"]
 preview = true
+select = ["B", "C4", "E", "F", "FURB", "I", "PT", "Q", "SIM", "U", "YTT"]
