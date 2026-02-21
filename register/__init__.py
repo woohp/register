@@ -35,11 +35,9 @@ def register_image(image1: u8Array, image2: u8Array, method: method_type = "pers
     X, Y, weights = do_match(keypoints1, descriptors1, keypoints2, descriptors2)
     transform_type = Transform.get_transform(method)
 
-    if transform_type is ThinPlateSplineTransform:
-        # For TPS, we estimate the mapping from target to source because TPS is not easily invertible
-        return find_transformation(Y, X, weights, transform_type)
-
-    return find_transformation(X, Y, weights, transform_type)
+    # We always estimate the mapping from target (image2) to source (image1)
+    # because image warping is a "pull" operation (iterating over target pixels).
+    return find_transformation(Y, X, weights, transform_type)
 
 
 def resize_and_blur(image: u8Array) -> u8Array:
@@ -208,48 +206,52 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
     out_size = (template_width, template_height)
     template_max_size: int = max(template_shape)
 
-    if T.shape == (3, 2):
-        # If this is an affine transformation, we can simply call cv2.warpAffine
-        # However, we must massage the matrix a bit
-        T = T.copy()
-        T[:1] *= template_max_size
-        T[1:] *= template_max_size / image_max_size
-        T = np.roll(T, -1, axis=0).T
+    # All transformations T are assumed to map from Target (normalized) to Source (normalized)
+    T = T.copy()
 
-        return cast(u8Array, cv2.warpAffine(image, T, dsize=out_size, flags=cv2.INTER_AREA))
+    if T.shape == (3, 2):
+        # Affine mapping: Source = [1, x_t, y_t] @ T
+        # Scale T to map from Target pixels to Source pixels
+        T[0] *= image_max_size
+        T[1:] *= image_max_size / template_max_size
+
+        # OpenCV warpAffine expects a 2x3 matrix: [ [a, b, tx], [c, d, ty] ]
+        # T is [ [tx, ty], [a, c], [b, d] ] -> we need to roll and transpose
+        M = np.roll(T, -1, axis=0).T
+        out = cv2.warpAffine(image, M, dsize=out_size, flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
 
     elif T.shape == (6, 2):
-        # If this is a quadratic transformation, use cv2.remap
-        T = np.roll(T, -1, axis=0)
-        T_expanded = np.identity(6, dtype=T.dtype)
-        T_expanded[:6, :2] = T
-        T = np.roll(np.linalg.inv(T_expanded)[:, :2], 1, axis=0)
-        T *= image_max_size
-        T[1:] /= template_max_size
-        T[3:] /= template_max_size
+        # Quadratic mapping: use cv2.remap
+        T[0] *= image_max_size
+        T[1:3] *= image_max_size / template_max_size
+        T[3:] *= image_max_size / (template_max_size**2)
 
+        # Roll to put translation last if needed? No, generate_quadratic_remap_maps expects this order:
+        # T[0] is const, T[1] is x, T[2] is y, T[3] is xx, T[4] is xy, T[5] is yy
         map1, map2 = generate_quadratic_remap_maps(*template_shape, T)
-
-        return cast(u8Array, cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA))
+        out = cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)
 
     elif T.shape == (3, 3):
-        # massage the transformation matrix a bit
-        T = T.copy()
-        T[:2] *= image_max_size / template_max_size
-        T[2] *= image_max_size
-        T[:, -1] /= template_max_size
+        # Perspective mapping
+        # T maps normalized Target to normalized Source.
+        # ScaledPerspective = S_source @ T @ S_target_inv
+        # where S(x) = x / image_max_size
+        T[:2, :2] *= image_max_size / template_max_size
+        T[2, :2] *= image_max_size
+        T[:2, 2] /= template_max_size
+        # T[2, 2] remains unchanged (usually 1)
 
-        return cast(u8Array, cv2.warpPerspective(image, T.T, dsize=out_size, flags=cv2.INTER_AREA))
+        # OpenCV warpPerspective expects M s.t. x_s = M @ x_t. We have T s.t. x_s = x_t @ T
+        out = cv2.warpPerspective(image, T.T, dsize=out_size, flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
 
     elif T.ndim == 2 and T.shape[1] == 4:
         # Thin Plate Spline
-        # T was estimated as target -> source
-        T = T.astype(np.float32)
         map1, map2 = generate_tps_remap_maps(*template_shape, T)
         map1 *= image_max_size
         map2 *= image_max_size
-
-        return cast(u8Array, cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA))
+        out = cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)
 
     else:
         raise ValueError(f"unrecognized transformation: {T!r}")
+
+    return cast(u8Array, out)
