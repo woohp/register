@@ -37,6 +37,11 @@ class Transform(ABC):
         pass
 
     @staticmethod
+    @abstractmethod
+    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+        pass
+
+    @staticmethod
     def get_transform(method: method_type) -> type[Transform]:
         match method:
             case "perspective":
@@ -85,6 +90,20 @@ class PolynomialTransform(Transform):
     @staticmethod
     def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
         return A @ T
+
+    @staticmethod
+    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+        # Penalize deviation from identity
+        res = T[..., 1:, :].copy()
+        if res.shape[-2:] == (2, 2):
+            res[..., 0, 0] -= 1
+            res[..., 1, 1] -= 1
+        elif res.shape[-2:] == (5, 2):
+            # Quadratic has 6 coeffs, first is translation.
+            # Next 2 are linear, we subtract identity from those.
+            res[..., 0, 0] -= 1
+            res[..., 1, 1] -= 1
+        return (res**2).sum(axis=(-2, -1))
 
 
 class AffineTransform(PolynomialTransform):
@@ -255,6 +274,17 @@ class PerspectiveTransform(Transform):
         Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
         return Y_hat
 
+    @staticmethod
+    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+        # T is 3x3 for perspective. Penalize deviation from Identity.
+        # Identity for perspective is diag(1, 1, 1) if not normalized.
+        # Here we assume T is normalized such that T[2, 2] = 1.
+        res = T.copy()
+        res[..., 0, 0] -= 1
+        res[..., 1, 1] -= 1
+        res[..., 2, 2] -= 1
+        return (res**2).sum(axis=(-2, -1))
+
 
 class ThinPlateSplineTransform(Transform):
     min_samples = 5
@@ -334,3 +364,12 @@ class ThinPlateSplineTransform(Transform):
             return (K @ W) + (P_for_matmul @ ab)
         else:
             return (K @ W) + (P @ ab)
+
+    @staticmethod
+    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+        # For TPS, the regularization is only on the non-affine weights W.
+        # The affine part is already captured by the P and P.T blocks in the system solve.
+        # Standard TPS theory penalizes the bending energy, which is Trace(W.T @ K @ W).
+        # We use a simpler L2 penalty on W for stability during IRLS.
+        W = T[..., :-3, :2]
+        return (W**2).sum(axis=(-2, -1))

@@ -186,3 +186,9 @@ def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> N
         estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A_batched, Y, 0.0)
         Y_hat = register.transforms.ThinPlateSplineTransform.transform(A_batched, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
+
+        # test positive lambda (regularization)
+        estimated_T_reg = register.transforms.ThinPlateSplineTransform.estimate(A_batched, Y, 0.01)
+        assert estimated_T_reg.shape == estimated_T.shape
+        # Just check it still runs and produces a different result
+        assert not np.allclose(estimated_T_reg[..., :2], estimated_T[..., :2])

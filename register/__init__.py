@@ -150,7 +150,7 @@ def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transfor
     Y_hat = transform.transform(A, Ts)
     distance_squared = get_distance_squared(Y_hat, Y)
     objective_losses = np.average(geman_mcclure_loss(distance_squared, SIGMA), axis=-1, weights=weights)
-    weights_losses = (Ts[:, 1:] ** 2).sum(axis=(1, 2))
+    weights_losses = transform.penalty(Ts)
     losses = objective_losses + RANSAC_L2_REGULARIZATION * weights_losses
 
     best_idx = np.argmin(losses)
@@ -180,14 +180,14 @@ def irls(
         w_reshaped = w_ext.reshape([-1] + [1] * (A.ndim - 1))
         WA = A * w_reshaped
         WY = np.pad(Y, [(0, A.shape[0] - Y.shape[0]), (0, 0)], constant_values=0) * w_reshaped
-        T = transform.estimate(WA, WY, 0.0)
+        T = transform.estimate(WA, WY, RANSAC_L2_REGULARIZATION)
 
         # measure how good the new transformation is
         Y_hat = transform.transform(A, T)
         distance_squared = get_distance_squared(Y_hat, Y)
         w = weights / (distance_squared + SIGMA)
         objective_loss = (w * distance_squared).sum() / weights.sum()
-        weights_loss = (T[:, 1:] ** 2).sum(axis=(-2, -1))
+        weights_loss = transform.penalty(T)
         loss: float = (objective_loss + weights_loss * RANSAC_L2_REGULARIZATION).item()
 
         # if the new transformation is not better, return the old transformatoin
