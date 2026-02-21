@@ -367,9 +367,8 @@ class ThinPlateSplineTransform(Transform):
 
     @staticmethod
     def penalty(T: FloatingNDArray) -> FloatingNDArray:
-        # For TPS, the regularization is only on the non-affine weights W.
-        # The affine part is already captured by the P and P.T blocks in the system solve.
-        # Standard TPS theory penalizes the bending energy, which is Trace(W.T @ K @ W).
-        # We use a simpler L2 penalty on W for stability during IRLS.
         W = T[..., :-3, :2]
-        return (W**2).sum(axis=(-2, -1))
+        X = T[..., :-3, -2:]
+        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
+        K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
+        return np.einsum("...id,...ij,...jd->...", W, K, W)

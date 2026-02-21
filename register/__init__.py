@@ -6,7 +6,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .transforms import QuadraticTransform, ThinPlateSplineTransform, Transform, method_type
+from .transforms import QuadraticTransform, Transform, method_type
+from .transforms import ThinPlateSplineTransform as ThinPlateSplineTransform
 from .utils import (
     generate_quadratic_remap_maps,
     generate_tps_remap_maps,
@@ -131,7 +132,7 @@ def find_transformation(
 
 
 def geman_mcclure_loss(d: f32Array, sigma: float) -> f32Array:
-    return d / (d + sigma)
+    return (d / (d + sigma)).astype(np.float32)
 
 
 def ransac(A: f32Array, Y: f32Array, weights: f32Array, transform: type[Transform]) -> tuple[f32Array, float]:
@@ -188,8 +189,8 @@ def irls(
         # measure how good the new transformation is
         Y_hat = transform.transform(A, T)
         distance_squared = get_distance_squared(Y_hat, Y)
-        w = weights / (distance_squared + SIGMA)
-        objective_loss = (w * distance_squared).sum() / weights.sum()
+        w = (weights.astype(np.float64) * SIGMA / (distance_squared.astype(np.float64) + SIGMA) ** 2).astype(np.float32)
+        objective_loss = np.average(geman_mcclure_loss(distance_squared, SIGMA), axis=-1, weights=weights)
         weights_loss = transform.penalty(T)
         loss: float = (objective_loss + weights_loss * RANSAC_L2_REGULARIZATION).item()
 

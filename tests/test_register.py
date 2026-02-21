@@ -4,7 +4,6 @@ from numpy.typing import NDArray
 from PIL import Image
 
 import register
-import register.transforms
 
 
 def test_register_against_self_should_produce_identity_transformation() -> None:
