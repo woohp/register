@@ -79,8 +79,8 @@ class PolynomialTransform(Transform):
         # solve regularized least squares
         # https://stackoverflow.com/questions/27476933/numpy-linear-regression-with-regularization
         A_T = A.swapaxes(-2, -1)
-        res = np.linalg.solve(A_T @ A + lamb * np.identity(A.shape[-1], dtype=A.dtype), A_T @ Y)
-        return cast("FloatingNDArray", res)
+        res = np.linalg.solve(A_T @ A + lamb * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        return cast(FloatingNDArray, res)
 
     @staticmethod
     def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
@@ -108,60 +108,98 @@ class SimilarityTransform(AffineTransform):
     """
 
     @staticmethod
+    def _estimate_rigid(src_centered: FloatingNDArray, dst_centered: FloatingNDArray) -> FloatingNDArray:
+        # 3-DOF Rigid estimation (SVD)
+        H = src_centered.swapaxes(-2, -1) @ dst_centered
+        U, _, Vt = np.linalg.svd(H)
+        R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+
+        needs_inverting = np.linalg.det(R_rot) < 0
+        if np.any(needs_inverting):
+            Vt_copy = Vt.copy()
+            Vt_copy[needs_inverting, -1, :] *= -1
+            R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
+
+        return R_rot.swapaxes(-2, -1)
+
+    @staticmethod
+    def _estimate_anisotropic(
+        src_centered: FloatingNDArray, dst_centered: FloatingNDArray, lamb: float
+    ) -> FloatingNDArray:
+        # 5-DOF Anisotropic Similarity: Solve for best-fit RD or DR matrix with 0 shear.
+        SXX = src_centered.swapaxes(-2, -1) @ src_centered
+        SXY = src_centered.swapaxes(-2, -1) @ dst_centered
+        Id = np.identity(2, dtype=src_centered.dtype)
+        M_aff = np.linalg.solve(SXX + (lamb + 1e-8) * Id, SXY)
+
+        # Check which model has less shear: Rotate-then-Scale (RD) or Scale-then-Rotate (DR)
+        MTM = M_aff.swapaxes(-2, -1) @ M_aff
+        MMT = M_aff @ M_aff.swapaxes(-2, -1)
+
+        # Off-diagonals represent shear in that coordinate system
+        off_diag_mtm = np.abs(MTM[..., 0, 1])
+        off_diag_mmt = np.abs(MMT[..., 0, 1])
+
+        # scale_on_right means M = R @ D
+        scale_on_right = off_diag_mtm <= off_diag_mmt
+
+        # Extract scales from diagonals (preserves x/y axis mapping)
+        s_rd = np.sqrt(np.maximum(np.diagonal(MTM, axis1=-2, axis2=-1), 1e-8))
+        s_dr = np.sqrt(np.maximum(np.diagonal(MMT, axis1=-2, axis2=-1), 1e-8))
+
+        # Vectorized selection and decomposition
+        M = np.empty_like(M_aff)
+
+        # Case 1: Rotate-then-Scale (M = R @ D)
+        mask = scale_on_right
+        if np.any(mask):
+            Mi, si = M_aff[mask], s_rd[mask]
+            Di_inv = 1.0 / si[..., None, :] * np.identity(2, dtype=Mi.dtype)
+            Ri_est = Mi @ Di_inv
+            Ui, _, Vti = np.linalg.svd(Ri_est)
+            Ri = Ui @ Vti
+            det_i = np.linalg.det(Ri)
+            needs_flip = det_i < 0
+            if np.any(needs_flip):
+                Vti[needs_flip, -1, :] *= -1
+                Ri[needs_flip] = Ui[needs_flip] @ Vti[needs_flip]
+            M[mask] = Ri * si[..., None, :]
+
+        # Case 2: Scale-then-Rotate (M = D @ R)
+        mask = ~scale_on_right
+        if np.any(mask):
+            Mi, si = M_aff[mask], s_dr[mask]
+            Di_inv = 1.0 / si[..., None, :] * np.identity(2, dtype=Mi.dtype)
+            Ri_est = Di_inv.swapaxes(-2, -1) @ Mi  # D^-1 is diagonal, so swap is just for matmul
+            Ui, _, Vti = np.linalg.svd(Ri_est)
+            Ri = Ui @ Vti
+            det_i = np.linalg.det(Ri)
+            needs_flip = det_i < 0
+            if np.any(needs_flip):
+                Vti[needs_flip, -1, :] *= -1
+                Ri[needs_flip] = Ui[needs_flip] @ Vti[needs_flip]
+            M[mask] = si[..., :, None] * Ri
+
+        return M
+
+    @staticmethod
     def _estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float, compute_scale: bool) -> FloatingNDArray:
         src_xy = A[..., 1:]
         dst_xy = Y
 
-        # Compute centroids
-        src_center: FloatingNDArray = np.mean(src_xy, axis=-2, keepdims=True)
-        dst_center: FloatingNDArray = np.mean(dst_xy, axis=-2, keepdims=True)
+        src_center = np.mean(src_xy, axis=-2, keepdims=True)
+        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
 
-        # Center the points
         src_centered = src_xy - src_center
         dst_centered = dst_xy - dst_center
 
         if compute_scale:
-            # 5-DOF Anisotropic Similarity estimation: translation, rotation, and 2 scales (no shear).
-            # We first solve for an unrestricted affine transformation on centered points.
-            # (src_centered.T @ src_centered) @ M = (src_centered.T @ dst_centered)
-            SXX = src_centered.swapaxes(-2, -1) @ src_centered
-            SXY = src_centered.swapaxes(-2, -1) @ dst_centered
-
-            # Solve for M_aff using regularized least squares for stability
-            Id = np.identity(2, dtype=A.dtype)
-            M_aff = np.linalg.solve(SXX + (lamb + 1e-8) * Id, SXY)
-
-            # Project M_aff to the closest 5-DOF transform: M = [ [s1*c, s2*s], [-s1*s, s2*c] ]
-            theta = np.arctan2(M_aff[..., 0, 1] - M_aff[..., 1, 0], M_aff[..., 1, 1] + M_aff[..., 0, 0])
-            c, s = np.cos(theta), np.sin(theta)
-
-            s1 = M_aff[..., 0, 0] * c - M_aff[..., 1, 0] * s
-            s2 = M_aff[..., 1, 1] * c + M_aff[..., 0, 1] * s
-
-            M = np.stack(
-                [np.stack([s1 * c, s2 * s], axis=-1), np.stack([-s1 * s, s2 * c], axis=-1)],
-                axis=-2,
-            )
-
+            M = SimilarityTransform._estimate_anisotropic(src_centered, dst_centered, lamb)
         else:
-            # 3-DOF Rigid estimation (Umeyama/SVD)
-            H = src_centered.swapaxes(-2, -1) @ dst_centered
-            U, _, Vt = np.linalg.svd(H)
-            R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+            M = SimilarityTransform._estimate_rigid(src_centered, dst_centered)
 
-            # Ensure a proper rotation matrix (determinant = 1)
-            needs_inverting = np.linalg.det(R_rot) < 0
-            if np.any(needs_inverting):
-                Vt_copy = Vt.copy()
-                Vt_copy[needs_inverting, -1, :] *= -1
-                R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
-
-            M = R_rot.swapaxes(-2, -1)
-
-        # compute the translation
         t = dst_center - src_center @ M
 
-        # Construct the full transformation matrix
         return np.concatenate([t, M], axis=-2)
 
     @staticmethod
