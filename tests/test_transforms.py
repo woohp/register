@@ -100,29 +100,70 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     assert estimated_T.dtype == np.float32
 
 
-def test_aniostropic_similarity_transform() -> None:
+def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     theta = 1.234
     tx: float = -3.0
     ty: float = 5.0
-    scale1, scale2 = 0.123, 0.456
-    T = np.array(
-        [
-            [tx, math.cos(theta) * scale1, -math.sin(theta) * scale1],
-            [ty, math.sin(theta) * scale2, math.cos(theta) * scale2],
-        ],
-        dtype=np.float32,
-    ).T
+    sx, sy = 0.123, 0.456
+    c, s = math.cos(theta), math.sin(theta)
+
+    D = np.array([[sx, 0], [0, sy]], dtype=np.float32)
+    R = np.array([[c, -s], [s, c]], dtype=np.float32)
+    M = R.T @ D
+    t = np.array([[tx, ty]], dtype=np.float32)
+    T = np.concatenate([t, M], axis=0)
 
     A = np.random.randn(91, 3).astype(np.float32)
     A[..., 0] = 1
     Y = A @ T
 
     estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
-    np.testing.assert_array_almost_equal(estimated_T, T, 6)
+    np.testing.assert_array_almost_equal(estimated_T, T, 5)
+
+
+def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
+    theta = 1.234
+    tx: float = -3.0
+    ty: float = 5.0
+    sx, sy = 0.123, 0.456
+    c, s = math.cos(theta), math.sin(theta)
+
+    D = np.array([[sx, 0], [0, sy]], dtype=np.float32)
+    R = np.array([[c, -s], [s, c]], dtype=np.float32)
+    M = D @ R.T
+    t = np.array([[tx, ty]], dtype=np.float32)
+    T = np.concatenate([t, M], axis=0)
+
+    A = np.random.randn(91, 3).astype(np.float32)
+    A[..., 0] = 1
+    Y = A @ T
+
+    estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
+    np.testing.assert_array_almost_equal(estimated_T, T, 5)
+
+
+@pytest.mark.parametrize("lamb", [0.0, 0.1])
+def test_estimate_thin_plate_spline_transform(lamb: float) -> None:
+    np.random.seed(42)
+    num_points = 50
+    X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
+    Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
+    A = register.transforms.ThinPlateSplineTransform.expand(X, Y)
+    estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A, Y, lamb)
+    Y_hat = register.transforms.ThinPlateSplineTransform.transform(A, estimated_T)
+
+    if lamb == 0.0:
+        np.testing.assert_array_almost_equal(Y_hat, Y, 4)
+    else:
+        W = estimated_T[:num_points, :2]
+        P = np.concatenate([np.ones((num_points, 1)), X], axis=1)
+        constraint = P.T @ W
+        np.testing.assert_array_almost_equal(constraint, np.zeros((3, 2)), 6)
+        np.testing.assert_allclose(Y_hat, Y, atol=0.02)
 
 
 @pytest.mark.parametrize("batch_size", [None, 5])
-def test_estimate_thin_plate_spline_transform(batch_size: int | None) -> None:
+def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> None:
     num_points = 50
     if batch_size is None:
         X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
