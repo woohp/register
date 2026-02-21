@@ -129,7 +129,7 @@ class SimilarityTransform(AffineTransform):
         # 5-DOF Anisotropic Similarity: Solve for best-fit RD or DR matrix with 0 shear.
         SXX = src_centered.swapaxes(-2, -1) @ src_centered
         SXY = src_centered.swapaxes(-2, -1) @ dst_centered
-        Id = np.identity(2, dtype=src_centered.dtype)
+        Id = np.eye(2, dtype=src_centered.dtype)
         M_aff = np.linalg.solve(SXX + (lamb + 1e-8) * Id, SXY)
 
         # Check which model has less shear: Rotate-then-Scale (RD) or Scale-then-Rotate (DR)
@@ -154,7 +154,7 @@ class SimilarityTransform(AffineTransform):
         mask = scale_on_right
         if np.any(mask):
             Mi, si = M_aff[mask], s_rd[mask]
-            Di_inv = 1.0 / si[..., None, :] * np.identity(2, dtype=Mi.dtype)
+            Di_inv = 1.0 / si[..., None, :] * np.eye(2, dtype=Mi.dtype)
             Ri_est = Mi @ Di_inv
             Ui, _, Vti = np.linalg.svd(Ri_est)
             Ri = Ui @ Vti
@@ -169,7 +169,7 @@ class SimilarityTransform(AffineTransform):
         mask = ~scale_on_right
         if np.any(mask):
             Mi, si = M_aff[mask], s_dr[mask]
-            Di_inv = 1.0 / si[..., None, :] * np.identity(2, dtype=Mi.dtype)
+            Di_inv = 1.0 / si[..., None, :] * np.eye(2, dtype=Mi.dtype)
             Ri_est = Di_inv.swapaxes(-2, -1) @ Mi  # D^-1 is diagonal, so swap is just for matmul
             Ui, _, Vti = np.linalg.svd(Ri_est)
             Ri = Ui @ Vti
@@ -289,14 +289,18 @@ class ThinPlateSplineTransform(Transform):
 
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        N = Y.shape[-2]
         if Y.shape[-2] != A.shape[-1]:
             Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
         else:
             Y_aug = Y
-        T = np.linalg.solve(A + lamb * np.identity(A.shape[-1], dtype=A.dtype), Y_aug)
+        if lamb > 0:
+            A_reg = A.copy()
+            A_reg[..., :N, :N] += lamb * np.eye(N, dtype=A.dtype)
+            T = np.linalg.solve(A_reg, Y_aug)
+        else:
+            T = np.linalg.solve(A, Y_aug)
         X = A[..., :-3, -2:]
-        # T: [..., N+3, 2]
-        # We append X so that transform() knows the control points
         X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])
         return np.concatenate([T, X_padded], axis=-1)
 
