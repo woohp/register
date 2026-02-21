@@ -163,13 +163,18 @@ def irls(
     initial_loss: float,
     transform: type[Transform],
 ) -> tuple[f32Array, float]:
-    """Iteratively reweighted least squares"""
+    """Iteratively reweighted least squares with Geman-McClure loss.
+
+    For ρ(d) = d/(d+σ), the derivative is ρ'(d) = σ/(d+σ)².
+    IRLS weights are w = ρ'(d) = σ/(d+σ)² applied multiplicatively with match weights.
+    """
 
     last_T = T
     last_loss = initial_loss
 
     Y_hat = transform.transform(A, T)
-    w = weights / (get_distance_squared(Y_hat, Y) + SIGMA)
+    distance_squared = get_distance_squared(Y_hat, Y)
+    w = (weights.astype(np.float64) * SIGMA / (distance_squared.astype(np.float64) + SIGMA) ** 2).astype(np.float32)
 
     for _ in range(N_ITERS_IRLS):
         # estimate a new transformation using the current weights
