@@ -6,12 +6,10 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .transforms import QuadraticTransform, Transform, method_type
 from .transforms import ThinPlateSplineTransform as ThinPlateSplineTransform
+from .transforms import Transform, method_type
 from .utils import (
-    generate_bernstein1_remap_maps,
     generate_bernstein2_remap_maps,
-    generate_quadratic_remap_maps,
     generate_tps_remap_maps,
     get_distance_squared,
     hamming_distance_matrix,
@@ -117,17 +115,8 @@ def find_transformation(
 ) -> tuple[f32Array, float]:
     A = transform.expand(X, Y)
 
-    # if the transform is quadratic, then expand transformation to quadratic, and repeat the IRLS step
-    if transform is QuadraticTransform:
-        T, loss = ransac(A[:, :3], Y, weights, transform)
-        T, loss = irls(A[:, :3], Y, weights, T, loss, transform)
-        T = np.pad(T, [(0, 3), (0, 0)])
-        T, loss = irls(A, Y, weights, T, loss, transform)
-
-    else:
-        T, loss = ransac(A, Y, weights, transform)
-        T, loss = irls(A, Y, weights, T, loss, transform)
-
+    T, loss = ransac(A, Y, weights, transform)
+    T, loss = irls(A, Y, weights, T, loss, transform)
     T.flags.writeable = False
 
     return T, loss
@@ -227,15 +216,6 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         # T is [ [tx, ty], [a, c], [b, d] ] -> we need to roll and transpose
         M = np.roll(T, -1, axis=0).T
         out = cv2.warpAffine(image, M, dsize=out_size, flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
-
-    elif T.shape == (6, 2):
-        # Quadratic mapping: use cv2.remap
-        T[0] *= image_max_size
-        T[1:3] *= image_max_size / template_max_size
-        T[3:] *= image_max_size / (template_max_size**2)
-
-        map1, map2 = generate_quadratic_remap_maps(*template_shape, T)
-        out = cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)
 
     elif T.shape == (9, 2):
         # Quadratic Bernstein (biquadratic) mapping

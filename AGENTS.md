@@ -40,7 +40,7 @@ mypy register tests
 
 - `register/` - Main library code
   - `__init__.py` - Core registration functions (`register_image`, `generate_warped_image`)
-  - `transforms.py` - Transformation classes (Perspective, Affine, Rigid, Similarity, Quadratic, ThinPlateSpline)
+  - `transforms.py` - Transformation classes (Perspective, Affine, Rigid, Similarity, ThinPlateSpline)
   - `cli.py` - Typer-based CLI entry point
   - `utils/` - Numba-compiled utility functions
 - `tests/` - Pytest test suite

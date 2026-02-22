@@ -10,9 +10,7 @@ from numpy.typing import NDArray
 from .utils import get_pairwise_distances_squared
 
 FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
-method_type = Literal[
-    "perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline", "quadratic_bernstein"
-]
+method_type = Literal["perspective", "affine", "rigid", "similarity", "thin_plate_spline", "quadratic_bernstein"]
 
 
 class Transform(ABC):
@@ -55,8 +53,6 @@ class Transform(ABC):
                 return RigidTransform
             case "similarity":
                 return SimilarityTransform
-            case "quadratic":
-                return QuadraticTransform
             case "thin_plate_spline":
                 return ThinPlateSplineTransform
             case "quadratic_bernstein":
@@ -86,7 +82,7 @@ class PolynomialTransform(Transform):
 
     Uses the standard monomial basis for polynomial fitting:
     - Degree 1 (affine): [1, x, y]
-    - Degree 2 (quadratic): [1, x, y, x², xy, y²]
+    - Degree N (not implemented yet)
 
     This is the most common polynomial representation but can have poor numerical
     conditioning. For better stability on normalized coordinates, consider
@@ -117,11 +113,6 @@ class PolynomialTransform(Transform):
         # Penalize deviation from identity
         res = T[..., 1:, :].copy()
         if res.shape[-2:] == (2, 2):
-            res[..., 0, 0] -= 1
-            res[..., 1, 1] -= 1
-        elif res.shape[-2:] == (5, 2):
-            # Quadratic has 6 coeffs, first is translation.
-            # Next 2 are linear, we subtract identity from those.
             res[..., 0, 0] -= 1
             res[..., 1, 1] -= 1
         return (res**2).sum(axis=(-2, -1))
@@ -251,14 +242,6 @@ class RigidTransform(SimilarityTransform):
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         return SimilarityTransform._estimate(A, Y, lamb, compute_scale=False)
-
-
-class QuadraticTransform(PolynomialTransform):
-    min_samples = 6
-
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        return poly_expand(X, 2)
 
 
 class BernsteinTransform(Transform):
