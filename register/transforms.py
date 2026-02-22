@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from abc import ABC, abstractmethod
 from typing import Literal, TypeVar, cast
 
@@ -9,7 +10,9 @@ from numpy.typing import NDArray
 from .utils import get_pairwise_distances_squared
 
 FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
-method_type = Literal["perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline"]
+method_type = Literal[
+    "perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline", "quadratic_bernstein"
+]
 
 
 class Transform(ABC):
@@ -56,6 +59,8 @@ class Transform(ABC):
                 return QuadraticTransform
             case "thin_plate_spline":
                 return ThinPlateSplineTransform
+            case "quadratic_bernstein":
+                return QuadraticBernsteinTransform
             case _:
                 raise ValueError(f"unrecognized method: {method_type!r}")
 
@@ -77,6 +82,22 @@ def poly_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
 
 
 class PolynomialTransform(Transform):
+    """Power basis (monomial) polynomial transformation.
+
+    Uses the standard monomial basis for polynomial fitting:
+    - Degree 1 (affine): [1, x, y]
+    - Degree 2 (quadratic): [1, x, y, x², xy, y²]
+
+    This is the most common polynomial representation but can have poor numerical
+    conditioning. For better stability on normalized coordinates, consider
+    BernsteinTransform which uses Bernstein polynomials.
+
+    The transformation is parameterized as:
+        [x', y'] = A @ [basis(x,y)]^T
+
+    where A is a (num_basis, 2) coefficient matrix.
+    """
+
     @staticmethod
     def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
         # A: [..., samples, K] where K is determined by the degree
@@ -238,6 +259,72 @@ class QuadraticTransform(PolynomialTransform):
     @staticmethod
     def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
         return poly_expand(X, 2)
+
+
+class BernsteinTransform(Transform):
+    """Bernstein polynomial transformation.
+
+    Uses Bernstein polynomials as the basis for polynomial fitting. Bernstein
+    polynomials have superior numerical stability on [0,1]² compared to the
+    power basis (monomials), making them ideal for normalized coordinates.
+
+    The tensor-product basis on [0,1]²:
+        B_{i,j}^d(x,y) = C(d,i) * x^i * (1-x)^{d-i} * C(d,j) * y^j * (1-y)^{d-j}
+
+    Properties:
+    - Partition of unity: sum of all basis functions = 1
+    - Non-negative: all basis functions are in [0,1] on [0,1]²
+    - Well-conditioned: coefficients have similar magnitudes
+
+    This is particularly useful when coordinates are already normalized to [0,1],
+    as is typical in image registration pipelines.
+    """
+
+    degrees: int
+
+    @staticmethod
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
+        raise NotImplementedError("Subclasses must implement expand")
+
+    @staticmethod
+    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+        A_T = A.swapaxes(-2, -1)
+        res = np.linalg.solve(A_T @ A + lamb * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        return cast(FloatingNDArray, res)
+
+    @staticmethod
+    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
+        return A @ T
+
+    @staticmethod
+    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+        return np.zeros(T.shape[:-2], dtype=T.dtype)
+
+
+def _bernstein_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
+    """Expand coordinates to Bernstein polynomial basis of degree d."""
+    x = X[..., 0:1]
+    y = X[..., 1:2]
+
+    basis_list = []
+    for j in range(d + 1):
+        by = math.comb(d, j) * (y**j) * ((1 - y) ** (d - j))
+        for i in range(d + 1):
+            bx = math.comb(d, i) * (x**i) * ((1 - x) ** (d - i))
+            basis_list.append(bx * by)
+
+    return np.concatenate(basis_list, axis=-1)
+
+
+class QuadraticBernsteinTransform(BernsteinTransform):
+    """Quadratic transformation using biquadratic Bernstein basis (degree 2)."""
+
+    degrees: int = 2
+    min_samples = 9
+
+    @staticmethod
+    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
+        return _bernstein_expand(X, 2)
 
 
 class PerspectiveTransform(Transform):

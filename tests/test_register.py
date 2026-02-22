@@ -15,14 +15,7 @@ def test_register_against_self_should_produce_identity_transformation() -> None:
 
 @pytest.mark.parametrize(
     "method",
-    [
-        "perspective",
-        "affine",
-        "rigid",
-        "similarity",
-        "quadratic",
-        "thin_plate_spline",
-    ],
+    ["perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline", "quadratic_bernstein"],
 )
 def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], method: str) -> None:
     image1, template_image = images

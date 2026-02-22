@@ -9,6 +9,8 @@ from numpy.typing import NDArray
 from .transforms import QuadraticTransform, Transform, method_type
 from .transforms import ThinPlateSplineTransform as ThinPlateSplineTransform
 from .utils import (
+    generate_bernstein1_remap_maps,
+    generate_bernstein2_remap_maps,
     generate_quadratic_remap_maps,
     generate_tps_remap_maps,
     get_distance_squared,
@@ -232,9 +234,14 @@ def generate_warped_image(image: u8Array, template_shape: tuple[int, int], T: f3
         T[1:3] *= image_max_size / template_max_size
         T[3:] *= image_max_size / (template_max_size**2)
 
-        # Roll to put translation last if needed? No, generate_quadratic_remap_maps expects this order:
-        # T[0] is const, T[1] is x, T[2] is y, T[3] is xx, T[4] is xy, T[5] is yy
         map1, map2 = generate_quadratic_remap_maps(*template_shape, T)
+        out = cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)
+
+    elif T.shape == (9, 2):
+        # Quadratic Bernstein (biquadratic) mapping
+        map1, map2 = generate_bernstein2_remap_maps(*template_shape, T)
+        map1 *= image_max_size
+        map2 *= image_max_size
         out = cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)
 
     elif T.shape == (3, 3):

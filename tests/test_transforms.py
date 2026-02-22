@@ -192,3 +192,34 @@ def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> N
         assert estimated_T_reg.shape == estimated_T.shape
         # Just check it still runs and produces a different result
         assert not np.allclose(estimated_T_reg[..., :2], estimated_T[..., :2])
+
+
+def test_bernstein_basis_partition_of_unity() -> None:
+    np.random.seed(42)
+    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+
+    A1 = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    assert A1.shape == (100, 9)
+    np.testing.assert_array_almost_equal(A1.sum(axis=-1), np.ones(100), 6)
+
+
+def test_bernstein_basis_nonnegative() -> None:
+    np.random.seed(42)
+    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+
+    A2 = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    assert np.all(A2 >= 0)
+
+
+def test_estimate_quadratic_bernstein_transform() -> None:
+    np.random.seed(42)
+    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+
+    T_true = np.random.randn(9, 2).astype(np.float32) * 0.1
+
+    A = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    Y = (A @ T_true).astype(np.float32)
+
+    estimated_T = register.transforms.QuadraticBernsteinTransform.estimate(A, Y, 0.0)
+    assert estimated_T.shape == (9, 2)
+    np.testing.assert_array_almost_equal(estimated_T, T_true, 5)
