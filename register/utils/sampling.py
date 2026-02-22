@@ -27,54 +27,62 @@ def xord(k: int, sk: int) -> list[int]:
     return [i + r for r, i in enumerate(sord(k, sk))]
 
 
-@numba_njit("List(i8)(u8, u8)", cache=True)
+@numba_njit("i8(i8, i8)", cache=True)
+def _binomial_safe(n: int, k: int) -> int:
+    """Compute C(n,k) safely, returning INT64_MAX on overflow."""
+    INT64_MAX = 9223372036854775807
+    if k > n - k:
+        k = n - k
+    if k < 0:
+        return 0
+    result = 1
+    for i in range(k):
+        if result > INT64_MAX // (n - i):
+            return INT64_MAX
+        result = result * (n - i) // (i + 1)
+    return result
+
+
+@numba_njit("List(i8)(i8, i8)", cache=True)
 def sord(k: int, sk: int) -> list[int]:
     """
     Inverse function of ``ords``, given output tuple size
     and compressed index.
     """
-    # implementation copied from here:
-    # https://math.stackexchange.com/a/1370461
-
-    # Allocate output array. Content does not matter here, only length.
     idx = [0] * k
     if k == 0:
         return idx
 
     s = sk
     if k > 1:
-        # Find j such that binomial(j+k-1,k) <= s < binomial(j+k,k)
-        j = 0
-        prev_b = 0
-        b = 1
-        while b <= s:
-            # Maintain invariants:
-            # prev_b == binomial(j+k-1,k), b == binomial(j+k,k)
-            prev_b = b
-            j += 1
-            b *= j + k
-            b //= j
-        b = prev_b
-        # j is now the greatest index occurring in the tuple.
-        # From now on, we will search backwards, decreasing j.
+        # Binary search for largest j such that C(j+k, k) <= s
+        lo, hi = 0, 1
+        while _binomial_safe(hi + k, k) <= s:
+            hi *= 2
+        j = -1
+        while lo < hi:
+            mid = (lo + hi) // 2
+            if _binomial_safe(mid + k, k) <= s:
+                j = mid
+                lo = mid + 1
+            else:
+                hi = mid
+
+        # After search: C(j+k, k) <= s < C(j+k+1, k)
+        # Original algorithm needs: j such that C(j+k, k) > s, with b = C(j+k-1, k)
+        b = _binomial_safe(j + k, k)
+        j = j + 1
+
+        # Search backwards, decreasing j
         for r in range(k - 1, 1, -1):
-            # b == binomial(j+r,r+1) <= s < binomial(j+r+1,r+1)
             idx[r] = j
             s -= b
-            # Update to b = binomial(j+r-1,r)
-            b *= r + 1
-            b //= j + r
-            # Find j such that binomial(j+r-1,r) <= s < binomial(j+r,r)
-            while b > s:
+            b = b * (r + 1) // (j + r)
+            while b > s and j > 0:
                 j -= 1
-                b *= j
-                b //= j + r
-        # Simplified handling of r = 1
-        # b == binomial(j+r,r+1) <= s < binomial(j+r+1,r+1)
+                b = b * j // (j + r)
         idx[1] = j
         s -= b
 
-    # Simplified handling of r = 0
-    # binomial(j+r,r+1) == s iff j == s
     idx[0] = s
     return idx
