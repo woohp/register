@@ -1,67 +1,128 @@
 from __future__ import annotations
 
 import math
+import random
 from abc import ABC, abstractmethod
-from typing import Literal, TypeVar, cast
+from typing import TypeVar
 
+import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .utils import get_pairwise_distances_squared
+from .utils import get_distance_squared, get_pairwise_distances_squared
 
 FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
-method_type = Literal["perspective", "affine", "rigid", "similarity", "thin_plate_spline", "quadratic_bernstein"]
+f32Array = NDArray[np.float32]
+u8Array = NDArray[np.uint8]
+i64Array = NDArray[np.int64]
 
 
 class Transform(ABC):
-    min_samples: int
+    _matrix: f32Array | None = None
+    N_ITERS_RANSAC: int = 4_000
+    N_ITERS_IRLS: int = 50
+    SIGMA: float = 0.00003
+    REG: float = 0.005
 
-    @staticmethod
+    @property
     @abstractmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        """Expand the data into their bases according to the basis function"""
+    def min_samples(self) -> int: ...
 
-    @staticmethod
-    def select(
-        A: FloatingNDArray, Y: FloatingNDArray, samples: NDArray[np.int64]
-    ) -> tuple[FloatingNDArray, FloatingNDArray]:
+    @abstractmethod
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array: ...
+
+    @abstractmethod
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array: ...
+
+    @abstractmethod
+    def transform_points(self, A: f32Array, T: f32Array) -> f32Array: ...
+
+    @abstractmethod
+    def penalty(self, T: f32Array) -> f32Array: ...
+
+    @abstractmethod
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array: ...
+
+    def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
         return A[samples], Y[samples]
 
-    @staticmethod
-    @abstractmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        pass
+    @property
+    def matrix(self) -> f32Array:
+        if self._matrix is None:
+            raise ValueError("Transform not fitted")
+        return self._matrix
 
-    @staticmethod
-    @abstractmethod
-    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
-        pass
+    def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> float:
+        A = self.expand(X, Y)
+        T, loss = self._ransac(A, Y, weights)
+        T, loss = self._irls(A, Y, weights, T, loss)
+        self._matrix = T
+        return loss
 
-    @staticmethod
-    @abstractmethod
-    def penalty(T: FloatingNDArray) -> FloatingNDArray:
-        pass
+    def _geman_mcclure_loss(self, d: f32Array) -> f32Array:
+        return (d / (d + self.SIGMA)).astype(np.float32)
 
-    @staticmethod
-    def get_transform(method: method_type) -> type[Transform]:
-        match method:
-            case "perspective":
-                return PerspectiveTransform
-            case "affine":
-                return AffineTransform
-            case "rigid":
-                return RigidTransform
-            case "similarity":
-                return SimilarityTransform
-            case "thin_plate_spline":
-                return ThinPlateSplineTransform
-            case "quadratic_bernstein":
-                return QuadraticBernsteinTransform
-            case _:
-                raise ValueError(f"unrecognized method: {method_type!r}")
+    def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
+        from .utils.sampling import get_random_samples
+
+        samples: i64Array = np.array(
+            get_random_samples(Y.shape[0], self.min_samples, self.N_ITERS_RANSAC, random.Random(4321)),
+            dtype=np.int64,
+        )
+
+        b_A, b_Y = self.select(A, Y, samples)
+        Ts = self.estimate(b_A, b_Y)
+
+        Y_hat = self.transform_points(A, Ts)
+        distance_squared = get_distance_squared(Y_hat, Y)
+        objective_losses = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
+        weights_losses = self.penalty(Ts)
+        losses = objective_losses + self.REG * weights_losses
+
+        best_idx = np.argmin(losses)
+        return Ts[best_idx], losses[best_idx].item()
+
+    def _irls(
+        self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, initial_loss: float
+    ) -> tuple[f32Array, float]:
+        last_T = T
+        last_loss = initial_loss
+
+        Y_hat = self.transform_points(A, T)
+        distance_squared = get_distance_squared(Y_hat, Y)
+        w = (weights.astype(np.float64) * self.SIGMA / (distance_squared.astype(np.float64) + self.SIGMA) ** 2).astype(
+            np.float32
+        )
+
+        for _ in range(self.N_ITERS_IRLS):
+            w_ext = np.ones((A.shape[0],) + w.shape[1:], dtype=w.dtype)
+            w_ext[: w.shape[0]] = w
+            w_reshaped = w_ext.reshape([-1] + [1] * (A.ndim - 1))
+            WA = A * w_reshaped
+            WY = np.pad(Y, [(0, A.shape[0] - Y.shape[0]), (0, 0)], constant_values=0) * w_reshaped
+            T = self.estimate(WA, WY)
+
+            Y_hat = self.transform_points(A, T)
+            distance_squared = get_distance_squared(Y_hat, Y)
+            w = (
+                weights.astype(np.float64) * self.SIGMA / (distance_squared.astype(np.float64) + self.SIGMA) ** 2
+            ).astype(np.float32)
+            objective_loss = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
+            weights_loss = self.penalty(T)
+            loss: float = (objective_loss + weights_loss * self.REG).item()
+
+            if loss >= last_loss:
+                return last_T, last_loss
+            elif last_loss - loss < 1e-6:
+                return T, loss
+
+            last_T = T
+            last_loss = loss
+
+        return T, last_loss
 
 
-def poly_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
+def poly_expand(X: f32Array, d: int) -> f32Array:
     if d == 1:
         return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
@@ -78,39 +139,23 @@ def poly_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
 
 
 class PolynomialTransform(Transform):
-    """Power basis (monomial) polynomial transformation.
+    degrees: int = 1
 
-    Uses the standard monomial basis for polynomial fitting:
-    - Degree 1 (affine): [1, x, y]
-    - Degree N (not implemented yet)
+    @property
+    def min_samples(self) -> int:
+        return poly_expand(np.zeros((1, 2), dtype=np.float32), self.degrees).shape[-1]
 
-    This is the most common polynomial representation but can have poor numerical
-    conditioning. For better stability on normalized coordinates, consider
-    BernsteinTransform which uses Bernstein polynomials.
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
+        return poly_expand(X, self.degrees)
 
-    The transformation is parameterized as:
-        [x', y'] = A @ [basis(x,y)]^T
-
-    where A is a (num_basis, 2) coefficient matrix.
-    """
-
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        # A: [..., samples, K] where K is determined by the degree
-        # Y: [..., samples, 2]
-        # solve regularized least squares
-        # https://stackoverflow.com/questions/27476933/numpy-linear-regression-with-regularization
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
-        res = np.linalg.solve(A_T @ A + lamb * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
-        return cast(FloatingNDArray, res)
+        return np.linalg.solve(A_T @ A + self.REG * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
-    @staticmethod
-    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
+    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         return A @ T
 
-    @staticmethod
-    def penalty(T: FloatingNDArray) -> FloatingNDArray:
-        # Penalize deviation from identity
+    def penalty(self, T: f32Array) -> f32Array:
         res = T[..., 1:, :].copy()
         if res.shape[-2:] == (2, 2):
             res[..., 0, 0] -= 1
@@ -119,28 +164,20 @@ class PolynomialTransform(Transform):
 
 
 class AffineTransform(PolynomialTransform):
-    min_samples = 3
+    degrees: int = 1
 
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        return poly_expand(X, 1)
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+        T = self.matrix.copy()
+        template_max_size = max(template_shape)
+        T[0] *= image_max_size
+        T[1:] *= image_max_size / template_max_size
+        M = np.roll(T, -1, axis=0).T
+        return cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
 
 
 class SimilarityTransform(AffineTransform):
-    """A similarity transform is a subgroup of the affine transform that allows for translation, rotation, uniform
-    scaling, and reflection.
-
-    See:
-        https://en.wikipedia.org/wiki/Similarity_(geometry)
-        https://math.stackexchange.com/a/3789053
-        https://ecommons.udayton.edu/cgi/viewcontent.cgi?article=1173&context=mee_fac_pub
-        https://graphics.stanford.edu/~smr/ICP/comparison/eggert_comparison_mva97.pdf
-
-    """
-
     @staticmethod
-    def _estimate_rigid(src_centered: FloatingNDArray, dst_centered: FloatingNDArray) -> FloatingNDArray:
-        # 3-DOF Rigid estimation (SVD)
+    def _estimate_rigid(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
         H = src_centered.swapaxes(-2, -1) @ dst_centered
         U, _, Vt = np.linalg.svd(H)
         R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
@@ -153,35 +190,25 @@ class SimilarityTransform(AffineTransform):
 
         return R_rot.swapaxes(-2, -1)
 
-    @staticmethod
-    def _estimate_anisotropic(
-        src_centered: FloatingNDArray, dst_centered: FloatingNDArray, lamb: float
-    ) -> FloatingNDArray:
-        # 5-DOF Anisotropic Similarity: Solve for best-fit RD or DR matrix with 0 shear.
+    def _estimate_anisotropic(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
         SXX = src_centered.swapaxes(-2, -1) @ src_centered
         SXY = src_centered.swapaxes(-2, -1) @ dst_centered
         Id = np.eye(2, dtype=src_centered.dtype)
-        M_aff = np.linalg.solve(SXX + (lamb + 1e-8) * Id, SXY)
+        M_aff = np.linalg.solve(SXX + (self.REG + 1e-8) * Id, SXY)
 
-        # Check which model has less shear: Rotate-then-Scale (RD) or Scale-then-Rotate (DR)
         MTM = M_aff.swapaxes(-2, -1) @ M_aff
         MMT = M_aff @ M_aff.swapaxes(-2, -1)
 
-        # Off-diagonals represent shear in that coordinate system
         off_diag_mtm = np.abs(MTM[..., 0, 1])
         off_diag_mmt = np.abs(MMT[..., 0, 1])
 
-        # scale_on_right means M = R @ D
         scale_on_right = off_diag_mtm <= off_diag_mmt
 
-        # Extract scales from diagonals (preserves x/y axis mapping)
         s_rd = np.sqrt(np.maximum(np.diagonal(MTM, axis1=-2, axis2=-1), 1e-8))
         s_dr = np.sqrt(np.maximum(np.diagonal(MMT, axis1=-2, axis2=-1), 1e-8))
 
-        # Vectorized selection and decomposition
         M = np.empty_like(M_aff)
 
-        # Case 1: Rotate-then-Scale (M = R @ D)
         mask = scale_on_right
         if np.any(mask):
             Mi, si = M_aff[mask], s_rd[mask]
@@ -196,12 +223,11 @@ class SimilarityTransform(AffineTransform):
                 Ri[needs_flip] = Ui[needs_flip] @ Vti[needs_flip]
             M[mask] = Ri * si[..., None, :]
 
-        # Case 2: Scale-then-Rotate (M = D @ R)
         mask = ~scale_on_right
         if np.any(mask):
             Mi, si = M_aff[mask], s_dr[mask]
             Di_inv = 1.0 / si[..., None, :] * np.eye(2, dtype=Mi.dtype)
-            Ri_est = Di_inv.swapaxes(-2, -1) @ Mi  # D^-1 is diagonal, so swap is just for matmul
+            Ri_est = Di_inv.swapaxes(-2, -1) @ Mi
             Ui, _, Vti = np.linalg.svd(Ri_est)
             Ri = Ui @ Vti
             det_i = np.linalg.det(Ri)
@@ -213,8 +239,7 @@ class SimilarityTransform(AffineTransform):
 
         return M
 
-    @staticmethod
-    def _estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float, compute_scale: bool) -> FloatingNDArray:
+    def _estimate(self, A: f32Array, Y: f32Array, compute_scale: bool) -> f32Array:
         src_xy = A[..., 1:]
         dst_xy = Y
 
@@ -225,98 +250,73 @@ class SimilarityTransform(AffineTransform):
         dst_centered = dst_xy - dst_center
 
         if compute_scale:
-            M = SimilarityTransform._estimate_anisotropic(src_centered, dst_centered, lamb)
+            M = self._estimate_anisotropic(src_centered, dst_centered)
         else:
-            M = SimilarityTransform._estimate_rigid(src_centered, dst_centered)
+            M = self._estimate_rigid(src_centered, dst_centered)
 
         t = dst_center - src_center @ M
 
         return np.concatenate([t, M], axis=-2)
 
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        return SimilarityTransform._estimate(A, Y, lamb, compute_scale=True)
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+        return self._estimate(A, Y, compute_scale=True)
 
 
 class RigidTransform(SimilarityTransform):
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        return SimilarityTransform._estimate(A, Y, lamb, compute_scale=False)
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+        return self._estimate(A, Y, compute_scale=False)
 
 
 class BernsteinTransform(Transform):
-    """Bernstein polynomial transformation.
+    def __init__(self, degrees: int = 2):
+        self.degrees = degrees
 
-    Uses Bernstein polynomials as the basis for polynomial fitting. Bernstein
-    polynomials have superior numerical stability on [0,1]² compared to the
-    power basis (monomials), making them ideal for normalized coordinates.
+    @property
+    def min_samples(self) -> int:
+        return (self.degrees + 1) ** 2
 
-    The tensor-product basis on [0,1]²:
-        B_{i,j}^d(x,y) = C(d,i) * x^i * (1-x)^{d-i} * C(d,j) * y^j * (1-y)^{d-j}
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
+        x = X[..., 0:1]
+        y = X[..., 1:2]
+        d = self.degrees
 
-    Properties:
-    - Partition of unity: sum of all basis functions = 1
-    - Non-negative: all basis functions are in [0,1] on [0,1]²
-    - Well-conditioned: coefficients have similar magnitudes
+        basis_list = []
+        for j in range(d + 1):
+            by = math.comb(d, j) * (y**j) * ((1 - y) ** (d - j))
+            for i in range(d + 1):
+                bx = math.comb(d, i) * (x**i) * ((1 - x) ** (d - i))
+                basis_list.append(bx * by)
 
-    This is particularly useful when coordinates are already normalized to [0,1],
-    as is typical in image registration pipelines.
-    """
+        return np.concatenate(basis_list, axis=-1)
 
-    degrees: int
-
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        raise NotImplementedError("Subclasses must implement expand")
-
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
-        res = np.linalg.solve(A_T @ A + lamb * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
-        return cast(FloatingNDArray, res)
+        return np.linalg.solve(A_T @ A + self.REG * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
-    @staticmethod
-    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
+    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         return A @ T
 
-    @staticmethod
-    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+    def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+        from .utils import generate_bernstein2_remap_maps
 
-def _bernstein_expand(X: FloatingNDArray, d: int) -> FloatingNDArray:
-    """Expand coordinates to Bernstein polynomial basis of degree d."""
-    x = X[..., 0:1]
-    y = X[..., 1:2]
-
-    basis_list = []
-    for j in range(d + 1):
-        by = math.comb(d, j) * (y**j) * ((1 - y) ** (d - j))
-        for i in range(d + 1):
-            bx = math.comb(d, i) * (x**i) * ((1 - x) ** (d - i))
-            basis_list.append(bx * by)
-
-    return np.concatenate(basis_list, axis=-1)
-
-
-class QuadraticBernsteinTransform(BernsteinTransform):
-    """Quadratic transformation using biquadratic Bernstein basis (degree 2)."""
-
-    degrees: int = 2
-    min_samples = 9
-
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        return _bernstein_expand(X, 2)
+        map1, map2 = generate_bernstein2_remap_maps(*template_shape, self.matrix)
+        return cv2.remap(  # type: ignore[return-value]
+            image,
+            (map1 * image_max_size).astype(np.float32),
+            (map2 * image_max_size).astype(np.float32),
+            interpolation=cv2.INTER_AREA,
+        )
 
 
 class PerspectiveTransform(Transform):
-    min_samples = 4
+    @property
+    def min_samples(self) -> int:
+        return 4
 
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        # X: [..., 2]
-        # Y: [..., 2]
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
         A = np.zeros((*X.shape[:-1], 2, 9), dtype=X.dtype)
 
         A[..., 0, :2] = X
@@ -327,41 +327,41 @@ class PerspectiveTransform(Transform):
 
         return A
 
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
-        # A: [..., 2, 9]
-        # Y: [..., 2], not used
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         _, _, V = np.linalg.svd(A.reshape(A.shape[:-3] + (-1, 9)))
         Ts = V[:, -1].reshape(-1, 3, 3)
         Ts /= Ts[:, -1:, -1:]
         Ts = Ts.swapaxes(1, 2)
         return Ts
 
-    @staticmethod
-    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
+    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         Y_hat = A[..., 0, :3] @ T
         Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
         Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
-        return Y_hat
+        return Y_hat.astype(np.float32)
 
-    @staticmethod
-    def penalty(T: FloatingNDArray) -> FloatingNDArray:
-        # T is 3x3 for perspective. Penalize deviation from Identity.
-        # Identity for perspective is diag(1, 1, 1) if not normalized.
-        # Here we assume T is normalized such that T[2, 2] = 1.
+    def penalty(self, T: f32Array) -> f32Array:
         res = T.copy()
         res[..., 0, 0] -= 1
         res[..., 1, 1] -= 1
         res[..., 2, 2] -= 1
         return (res**2).sum(axis=(-2, -1))
 
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+        T = self.matrix.copy()
+        template_max_size = max(template_shape)
+        T[:2, :2] *= image_max_size / template_max_size
+        T[2, :2] *= image_max_size
+        T[:2, 2] /= template_max_size
+        return cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
+
 
 class ThinPlateSplineTransform(Transform):
-    min_samples = 5
+    @property
+    def min_samples(self) -> int:
+        return 5
 
-    @staticmethod
-    def expand(X: FloatingNDArray, Y: FloatingNDArray) -> FloatingNDArray:
-        # X: [..., N, 2]
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
         pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
 
@@ -374,49 +374,37 @@ class ThinPlateSplineTransform(Transform):
 
         return A
 
-    @staticmethod
-    def select(
-        A: FloatingNDArray, Y: FloatingNDArray, samples: NDArray[np.int64]
-    ) -> tuple[FloatingNDArray, FloatingNDArray]:
-        # A is [N+3, N+3], Y is [N, 2]
-        # We need to extract X from A or re-expand
-        # A was returned by expand(X, Y), so K = A[..., :-3, :-3], P = A[..., :-3, -3:]
-        # Actually, it's easier to just pass X around or reconstruct it from P
+    def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
         X = A[..., :-3, -2:]
         Y_sampled = Y[samples]
-        A_sampled = ThinPlateSplineTransform.expand(X[samples], Y_sampled)
+        A_sampled = self.expand(X[samples], Y_sampled)
         return A_sampled, Y_sampled
 
-    @staticmethod
-    def estimate(A: FloatingNDArray, Y: FloatingNDArray, lamb: float) -> FloatingNDArray:
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         N = Y.shape[-2]
         if Y.shape[-2] != A.shape[-1]:
             Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
         else:
             Y_aug = Y
-        if lamb > 0:
+
+        if self.REG > 0:
             A_reg = A.copy()
-            A_reg[..., :N, :N] += lamb * np.eye(N, dtype=A.dtype)
+            A_reg[..., :N, :N] += self.REG * np.eye(N, dtype=A.dtype)
             T = np.linalg.solve(A_reg, Y_aug)
         else:
             T = np.linalg.solve(A, Y_aug)
+
         X = A[..., :-3, -2:]
         X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])
         return np.concatenate([T, X_padded], axis=-1)
 
-    @staticmethod
-    def transform(A: FloatingNDArray, T: FloatingNDArray) -> FloatingNDArray:
-        # A is the expanded version of X_new, but for TPS expand(X, Y) returns the full matrix.
-        # In find_transformation, A is passed to irls and ransac.
-        # X_new is A[..., :-3, -2:]
+    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         X_new = A[..., :-3, -2:]
-        # T: [Optional Batch, N+3, 4] where last 2 cols are X_old
         X_old = T[..., :-3, -2:]
         W = T[..., :-3, :2]
         ab = T[..., -3:, :2]
 
         if T.ndim == 3:
-            # RANSAC/Batch case
             X_new_batch = X_new[None].repeat(T.shape[0], axis=0) if X_new.ndim == 2 else X_new
             pairwise_distance_squared = get_pairwise_distances_squared(
                 X_new_batch.astype(np.float32), X_old.astype(np.float32)
@@ -431,14 +419,21 @@ class ThinPlateSplineTransform(Transform):
 
         if T.ndim == 3:
             P_for_matmul = P[None] if P.ndim == 2 else P
-            return (K @ W) + (P_for_matmul @ ab)
+            return ((K @ W) + (P_for_matmul @ ab)).astype(np.float32)
         else:
-            return (K @ W) + (P @ ab)
+            return ((K @ W) + (P @ ab)).astype(np.float32)
 
-    @staticmethod
-    def penalty(T: FloatingNDArray) -> FloatingNDArray:
+    def penalty(self, T: f32Array) -> f32Array:
         W = T[..., :-3, :2]
         X = T[..., :-3, -2:]
         pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
         return np.einsum("...id,...ij,...jd->...", W, K, W)
+
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+        from .utils import generate_tps_remap_maps
+
+        map1, map2 = generate_tps_remap_maps(*template_shape, self.matrix)
+        map1 = (map1 * image_max_size).astype(np.float32)
+        map2 = (map2 * image_max_size).astype(np.float32)
+        return cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)  # type: ignore[return-value]

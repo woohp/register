@@ -6,7 +6,7 @@ from register.utils import get_distance_squared, get_pairwise_distances_squared
 
 
 @pytest.mark.parametrize(
-    "batch_size, num_points, dim",
+    ("batch_size", "num_points", "dim"),
     [
         (None, 2, 2),
         (3, 5, 4),
@@ -22,7 +22,7 @@ def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int)
 
 
 @pytest.mark.parametrize(
-    "batch_size, n, m, dim",
+    ("batch_size", "n", "m", "dim"),
     [
         (None, 5, 7, 4),
         (3, 5, 7, 4),

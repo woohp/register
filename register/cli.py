@@ -1,10 +1,31 @@
-from typing import Annotated
+from typing import Annotated, cast
 
 import cv2
+import numpy as np
+from numpy.typing import NDArray
 from typer import Option, Typer
 
 from register import generate_warped_image, register_image
-from register.transforms import method_type
+from register.transforms import (
+    AffineTransform,
+    BernsteinTransform,
+    PerspectiveTransform,
+    RigidTransform,
+    SimilarityTransform,
+    ThinPlateSplineTransform,
+    Transform,
+)
+
+u8Array = NDArray[np.uint8]
+
+TRANSFORMS: dict[str, Transform] = {
+    "perspective": PerspectiveTransform(),
+    "affine": AffineTransform(),
+    "rigid": RigidTransform(),
+    "similarity": SimilarityTransform(),
+    "thin_plate_spline": ThinPlateSplineTransform(),
+    "bernstein2": BernsteinTransform(degrees=2),
+}
 
 app = Typer()
 
@@ -13,9 +34,12 @@ app = Typer()
 def main(
     image_path: str,
     template_path: str,
-    method: method_type = "perspective",
-    out_path: Annotated[str, Option("--out")] = "registered.png",
+    method: Annotated[str, Option("--method", "-m")] = "perspective",
+    out_path: Annotated[str, Option("--out", "-o")] = "registered.png",
 ) -> None:
+    if method not in TRANSFORMS:
+        raise ValueError(f"Unknown method: {method!r}. Available: {list(TRANSFORMS)}")
+
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
 
@@ -24,12 +48,12 @@ def main(
     if template is None:
         raise ValueError(f"Could not read template from {template_path}")
 
-    T, score = register_image(image, template, method)  # type: ignore
-    print("score:", score)
-    print("T:")
-    print(T)
+    transform = TRANSFORMS[method]
+    register_image(cast(u8Array, image), cast(u8Array, template), transform)
+    print("matrix:")
+    print(transform.matrix)
 
-    registered_image = generate_warped_image(image, template.shape, T)  # type: ignore
+    registered_image = generate_warped_image(cast(u8Array, image), template.shape, transform)
     cv2.imwrite(out_path, registered_image)
 
 

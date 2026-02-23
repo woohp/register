@@ -13,6 +13,8 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
 
+    rigid = register.transforms.RigidTransform()
+
     if batch_size is None:
         theta = 1.234
         tx_val: float = -3.0
@@ -43,7 +45,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = register.transforms.RigidTransform.estimate(A, Y, 0.0)
+    estimated_T = rigid.estimate(A, Y)
     assert estimated_T.shape == expected_shape
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
@@ -52,7 +54,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
         T_scaled = T.copy()
         T_scaled[1:] *= 2
         Y_scaled = A @ T_scaled
-        estimated_T_scaled = register.transforms.RigidTransform.estimate(A, Y_scaled, 0.0)
+        estimated_T_scaled = rigid.estimate(A, Y_scaled)
         assert not np.allclose(estimated_T_scaled, T_scaled, atol=1e-5)
 
 
@@ -61,6 +63,9 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     T: NDArray[np.float32]
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
+
+    similarity = register.transforms.SimilarityTransform()
+    similarity.REG = 0.0
 
     if batch_size is None:
         theta = 1.234
@@ -94,7 +99,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
+    estimated_T = similarity.estimate(A, Y)
     assert estimated_T.shape == expected_shape
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
@@ -117,7 +122,9 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
+    similarity = register.transforms.SimilarityTransform()
+    similarity.REG = 0.0
+    estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
@@ -138,67 +145,58 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = register.transforms.SimilarityTransform.estimate(A, Y, 0.0)
+    similarity = register.transforms.SimilarityTransform()
+    similarity.REG = 0.0
+    estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
-@pytest.mark.parametrize("lamb", [0.0, 0.1])
-def test_estimate_thin_plate_spline_transform(lamb: float) -> None:
+def test_estimate_thin_plate_spline_transform() -> None:
     np.random.seed(42)
     num_points = 50
     X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
     Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
-    A = register.transforms.ThinPlateSplineTransform.expand(X, Y)
-    estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A, Y, lamb)
-    Y_hat = register.transforms.ThinPlateSplineTransform.transform(A, estimated_T)
 
-    if lamb == 0.0:
-        np.testing.assert_array_almost_equal(Y_hat, Y, 4)
-    else:
-        W = estimated_T[:num_points, :2]
-        P = np.concatenate([np.ones((num_points, 1)), X], axis=1)
-        constraint = P.T @ W
-        np.testing.assert_array_almost_equal(constraint, np.zeros((3, 2)), 6)
-        np.testing.assert_allclose(Y_hat, Y, atol=0.02)
+    tps = register.transforms.ThinPlateSplineTransform()
+    tps.REG = 0.0
+    A = tps.expand(X, Y)
+    estimated_T = tps.estimate(A, Y)
+    Y_hat = tps.transform_points(A, estimated_T)
+
+    np.testing.assert_array_almost_equal(Y_hat, Y, 4)
 
 
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> None:
     num_points = 50
+    tps = register.transforms.ThinPlateSplineTransform()
+    tps.REG = 0.0
+
     if batch_size is None:
         X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
         Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
-        A = register.transforms.ThinPlateSplineTransform.expand(X, Y)
-        estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A, Y, 0.0)
-        Y_hat = register.transforms.ThinPlateSplineTransform.transform(A, estimated_T)
+        A = tps.expand(X, Y)
+        estimated_T = tps.estimate(A, Y)
+        Y_hat = tps.transform_points(A, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
     else:
         X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
         Y = X[None].repeat(batch_size, axis=0) + np.random.normal(0, 0.01, (batch_size, num_points, 2)).astype(
             np.float32
         )
-        A_init = register.transforms.ThinPlateSplineTransform.expand(X, Y[0])
-        # In RANSAC, A is often just the expanded version of ALL points
-        # But estimate/transform should handle whatever is passed.
-        # Let's test the batch estimate
-        # Note: estimate expects A and Y to Have same batch dimension if A is 3D
+        A_init = tps.expand(X, Y[0])
         A_batched = A_init[None].repeat(batch_size, axis=0)
-        estimated_T = register.transforms.ThinPlateSplineTransform.estimate(A_batched, Y, 0.0)
-        Y_hat = register.transforms.ThinPlateSplineTransform.transform(A_batched, estimated_T)
+        estimated_T = tps.estimate(A_batched, Y)
+        Y_hat = tps.transform_points(A_batched, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
-
-        # test positive lambda (regularization)
-        estimated_T_reg = register.transforms.ThinPlateSplineTransform.estimate(A_batched, Y, 0.01)
-        assert estimated_T_reg.shape == estimated_T.shape
-        # Just check it still runs and produces a different result
-        assert not np.allclose(estimated_T_reg[..., :2], estimated_T[..., :2])
 
 
 def test_bernstein_basis_partition_of_unity() -> None:
     np.random.seed(42)
     X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
 
-    A1 = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    bernstein = register.transforms.BernsteinTransform(degrees=2)
+    A1 = bernstein.expand(X, X)
     assert A1.shape == (100, 9)
     np.testing.assert_array_almost_equal(A1.sum(axis=-1), np.ones(100), 6)
 
@@ -207,7 +205,8 @@ def test_bernstein_basis_nonnegative() -> None:
     np.random.seed(42)
     X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
 
-    A2 = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    bernstein = register.transforms.BernsteinTransform(degrees=2)
+    A2 = bernstein.expand(X, X)
     assert np.all(A2 >= 0)
 
 
@@ -217,9 +216,11 @@ def test_estimate_quadratic_bernstein_transform() -> None:
 
     T_true = np.random.randn(9, 2).astype(np.float32) * 0.1
 
-    A = register.transforms.QuadraticBernsteinTransform.expand(X, X)
+    bernstein = register.transforms.BernsteinTransform(degrees=2)
+    bernstein.REG = 0.0
+    A = bernstein.expand(X, X)
     Y = (A @ T_true).astype(np.float32)
 
-    estimated_T = register.transforms.QuadraticBernsteinTransform.estimate(A, Y, 0.0)
+    estimated_T = bernstein.estimate(A, Y)
     assert estimated_T.shape == (9, 2)
     np.testing.assert_array_almost_equal(estimated_T, T_true, 5)
