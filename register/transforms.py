@@ -143,17 +143,15 @@ class Transform(ABC):
 
 
 @dataclass
-class PolynomialTransform(Transform):
-    """Transform using power/monomial polynomial basis."""
-
-    degrees: int = 1
+class AffineTransform(Transform):
+    """6-DOF affine transform: translation, rotation, scale, shear."""
 
     @property
     def min_samples(self) -> int:
-        return poly_expand(np.zeros((1, 2), dtype=np.float32), self.degrees).shape[-1]
+        return 3
 
     def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        return poly_expand(X, self.degrees)
+        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
@@ -165,34 +163,9 @@ class PolynomialTransform(Transform):
 
     def penalty(self, T: f32Array) -> f32Array:
         res = T[..., 1:, :].copy()
-        if res.shape[-2:] == (2, 2):
-            res[..., 0, 0] -= 1
-            res[..., 1, 1] -= 1
+        res[..., 0, 0] -= 1
+        res[..., 1, 1] -= 1
         return (res**2).sum(axis=(-2, -1))
-
-
-def poly_expand(X: f32Array, d: int) -> f32Array:
-    """Expand points to polynomial basis of degree d."""
-    if d == 1:
-        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
-
-    o = np.ones((*X.shape[:-1], 1), dtype=X.dtype)
-
-    if d == 2:
-        x, y = np.split(X, 2, axis=-1)
-        xx = np.square(x)
-        yy = np.square(y)
-        xy = x * y
-        return np.concatenate((o, X, xx, xy, yy), axis=-1)
-    else:
-        raise NotImplementedError
-
-
-@dataclass
-class AffineTransform(PolynomialTransform):
-    """6-DOF affine transform: translation, rotation, scale, shear."""
-
-    degrees: int = field(default=1, init=False)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
         T = self.matrix.copy()
