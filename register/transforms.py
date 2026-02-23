@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 import cv2
@@ -17,12 +18,13 @@ u8Array = NDArray[np.uint8]
 i64Array = NDArray[np.int64]
 
 
+@dataclass
 class Transform(ABC):
-    _matrix: f32Array | None = None
-    N_ITERS_RANSAC: int = 4_000
-    N_ITERS_IRLS: int = 50
-    SIGMA: float = 0.00003
-    REG: float = 0.005
+    reg: float = 0.005
+    sigma: float = 0.00003
+    n_iters_ransac: int = 4_000
+    n_iters_irls: int = 50
+    _matrix: f32Array | None = field(default=None, repr=False)
 
     @property
     @abstractmethod
@@ -60,13 +62,13 @@ class Transform(ABC):
         return loss
 
     def _geman_mcclure_loss(self, d: f32Array) -> f32Array:
-        return (d / (d + self.SIGMA)).astype(np.float32)
+        return (d / (d + self.sigma)).astype(np.float32)
 
     def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
         from .utils.sampling import get_random_samples
 
         samples: i64Array = np.array(
-            get_random_samples(Y.shape[0], self.min_samples, self.N_ITERS_RANSAC, random.Random(4321)),
+            get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321)),
             dtype=np.int64,
         )
 
@@ -77,7 +79,7 @@ class Transform(ABC):
         distance_squared = get_distance_squared(Y_hat, Y)
         objective_losses = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
         weights_losses = self.penalty(Ts)
-        losses = objective_losses + self.REG * weights_losses
+        losses = objective_losses + self.reg * weights_losses
 
         best_idx = np.argmin(losses)
         return Ts[best_idx], losses[best_idx].item()
@@ -90,11 +92,11 @@ class Transform(ABC):
 
         Y_hat = self.transform_points(A, T)
         distance_squared = get_distance_squared(Y_hat, Y)
-        w = (weights.astype(np.float64) * self.SIGMA / (distance_squared.astype(np.float64) + self.SIGMA) ** 2).astype(
+        w = (weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2).astype(
             np.float32
         )
 
-        for _ in range(self.N_ITERS_IRLS):
+        for _ in range(self.n_iters_irls):
             w_ext = np.ones((A.shape[0],) + w.shape[1:], dtype=w.dtype)
             w_ext[: w.shape[0]] = w
             w_reshaped = w_ext.reshape([-1] + [1] * (A.ndim - 1))
@@ -105,11 +107,11 @@ class Transform(ABC):
             Y_hat = self.transform_points(A, T)
             distance_squared = get_distance_squared(Y_hat, Y)
             w = (
-                weights.astype(np.float64) * self.SIGMA / (distance_squared.astype(np.float64) + self.SIGMA) ** 2
+                weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2
             ).astype(np.float32)
             objective_loss = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
             weights_loss = self.penalty(T)
-            loss: float = (objective_loss + weights_loss * self.REG).item()
+            loss: float = (objective_loss + weights_loss * self.reg).item()
 
             if loss >= last_loss:
                 return last_T, last_loss
@@ -138,6 +140,7 @@ def poly_expand(X: f32Array, d: int) -> f32Array:
         raise NotImplementedError
 
 
+@dataclass
 class PolynomialTransform(Transform):
     degrees: int = 1
 
@@ -150,7 +153,7 @@ class PolynomialTransform(Transform):
 
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + self.REG * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
     def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         return A @ T
@@ -163,8 +166,9 @@ class PolynomialTransform(Transform):
         return (res**2).sum(axis=(-2, -1))
 
 
+@dataclass
 class AffineTransform(PolynomialTransform):
-    degrees: int = 1
+    degrees: int = field(default=1, init=False)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
         T = self.matrix.copy()
@@ -175,6 +179,7 @@ class AffineTransform(PolynomialTransform):
         return cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
 
 
+@dataclass
 class SimilarityTransform(AffineTransform):
     @staticmethod
     def _estimate_rigid(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
@@ -194,7 +199,7 @@ class SimilarityTransform(AffineTransform):
         SXX = src_centered.swapaxes(-2, -1) @ src_centered
         SXY = src_centered.swapaxes(-2, -1) @ dst_centered
         Id = np.eye(2, dtype=src_centered.dtype)
-        M_aff = np.linalg.solve(SXX + (self.REG + 1e-8) * Id, SXY)
+        M_aff = np.linalg.solve(SXX + (self.reg + 1e-8) * Id, SXY)
 
         MTM = M_aff.swapaxes(-2, -1) @ M_aff
         MMT = M_aff @ M_aff.swapaxes(-2, -1)
@@ -262,14 +267,15 @@ class SimilarityTransform(AffineTransform):
         return self._estimate(A, Y, compute_scale=True)
 
 
+@dataclass
 class RigidTransform(SimilarityTransform):
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         return self._estimate(A, Y, compute_scale=False)
 
 
+@dataclass
 class BernsteinTransform(Transform):
-    def __init__(self, degrees: int = 2):
-        self.degrees = degrees
+    degrees: int = 2
 
     @property
     def min_samples(self) -> int:
@@ -291,7 +297,7 @@ class BernsteinTransform(Transform):
 
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + self.REG * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
     def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
         return A @ T
@@ -311,6 +317,7 @@ class BernsteinTransform(Transform):
         )
 
 
+@dataclass
 class PerspectiveTransform(Transform):
     @property
     def min_samples(self) -> int:
@@ -356,6 +363,7 @@ class PerspectiveTransform(Transform):
         return cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
 
 
+@dataclass
 class ThinPlateSplineTransform(Transform):
     @property
     def min_samples(self) -> int:
@@ -387,9 +395,9 @@ class ThinPlateSplineTransform(Transform):
         else:
             Y_aug = Y
 
-        if self.REG > 0:
+        if self.reg > 0:
             A_reg = A.copy()
-            A_reg[..., :N, :N] += self.REG * np.eye(N, dtype=A.dtype)
+            A_reg[..., :N, :N] += self.reg * np.eye(N, dtype=A.dtype)
             T = np.linalg.solve(A_reg, Y_aug)
         else:
             T = np.linalg.solve(A, Y_aug)

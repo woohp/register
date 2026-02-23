@@ -64,8 +64,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
 
-    similarity = register.transforms.SimilarityTransform()
-    similarity.REG = 0.0
+    similarity = register.transforms.SimilarityTransform(reg=0.0)
 
     if batch_size is None:
         theta = 1.234
@@ -122,8 +121,7 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.SimilarityTransform()
-    similarity.REG = 0.0
+    similarity = register.transforms.SimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
@@ -145,8 +143,7 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.SimilarityTransform()
-    similarity.REG = 0.0
+    similarity = register.transforms.SimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
@@ -157,8 +154,7 @@ def test_estimate_thin_plate_spline_transform() -> None:
     X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
     Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
 
-    tps = register.transforms.ThinPlateSplineTransform()
-    tps.REG = 0.0
+    tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
     A = tps.expand(X, Y)
     estimated_T = tps.estimate(A, Y)
     Y_hat = tps.transform_points(A, estimated_T)
@@ -169,8 +165,7 @@ def test_estimate_thin_plate_spline_transform() -> None:
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> None:
     num_points = 50
-    tps = register.transforms.ThinPlateSplineTransform()
-    tps.REG = 0.0
+    tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
 
     if batch_size is None:
         X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
@@ -216,8 +211,7 @@ def test_estimate_quadratic_bernstein_transform() -> None:
 
     T_true = np.random.randn(9, 2).astype(np.float32) * 0.1
 
-    bernstein = register.transforms.BernsteinTransform(degrees=2)
-    bernstein.REG = 0.0
+    bernstein = register.transforms.BernsteinTransform(degrees=2, reg=0.0)
     A = bernstein.expand(X, X)
     Y = (A @ T_true).astype(np.float32)
 
