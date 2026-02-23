@@ -20,6 +20,8 @@ i64Array = NDArray[np.int64]
 
 @dataclass
 class Transform(ABC):
+    """Base class for geometric transforms with RANSAC + IRLS fitting."""
+
     reg: float = 0.005
     sigma: float = 0.00003
     n_iters_ransac: int = 4_000
@@ -28,33 +30,49 @@ class Transform(ABC):
 
     @property
     @abstractmethod
-    def min_samples(self) -> int: ...
+    def min_samples(self) -> int:
+        """Minimum points needed to estimate transform."""
+        ...
 
     @abstractmethod
-    def expand(self, X: f32Array, Y: f32Array) -> f32Array: ...
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
+        """Build design matrix A from source points X."""
+        ...
 
     @abstractmethod
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array: ...
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+        """Estimate transform parameters from design matrix A and target points Y."""
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def transform_points(A: f32Array, T: f32Array) -> f32Array:
+        """Apply transform T to points in design matrix A."""
+        ...
 
     @abstractmethod
-    def transform_points(self, A: f32Array, T: f32Array) -> f32Array: ...
+    def penalty(self, T: f32Array) -> f32Array:
+        """Regularization penalty for transform parameters T."""
+        ...
 
     @abstractmethod
-    def penalty(self, T: f32Array) -> f32Array: ...
-
-    @abstractmethod
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array: ...
+    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+        """Warp image using fitted transform."""
+        ...
 
     def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
+        """Select subset of points for RANSAC sampling."""
         return A[samples], Y[samples]
 
     @property
     def matrix(self) -> f32Array:
+        """Fitted transform parameters. Raises if fit() not called."""
         if self._matrix is None:
             raise ValueError("Transform not fitted")
         return self._matrix
 
     def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> float:
+        """Fit transform from source X to target Y with point weights. Returns final loss."""
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
         T, loss = self._irls(A, Y, weights, T, loss)
@@ -124,7 +142,37 @@ class Transform(ABC):
         return T, last_loss
 
 
+@dataclass
+class PolynomialTransform(Transform):
+    """Transform using power/monomial polynomial basis."""
+
+    degrees: int = 1
+
+    @property
+    def min_samples(self) -> int:
+        return poly_expand(np.zeros((1, 2), dtype=np.float32), self.degrees).shape[-1]
+
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
+        return poly_expand(X, self.degrees)
+
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+        A_T = A.swapaxes(-2, -1)
+        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+
+    @staticmethod
+    def transform_points(A: f32Array, T: f32Array) -> f32Array:
+        return A @ T
+
+    def penalty(self, T: f32Array) -> f32Array:
+        res = T[..., 1:, :].copy()
+        if res.shape[-2:] == (2, 2):
+            res[..., 0, 0] -= 1
+            res[..., 1, 1] -= 1
+        return (res**2).sum(axis=(-2, -1))
+
+
 def poly_expand(X: f32Array, d: int) -> f32Array:
+    """Expand points to polynomial basis of degree d."""
     if d == 1:
         return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
@@ -141,33 +189,9 @@ def poly_expand(X: f32Array, d: int) -> f32Array:
 
 
 @dataclass
-class PolynomialTransform(Transform):
-    degrees: int = 1
-
-    @property
-    def min_samples(self) -> int:
-        return poly_expand(np.zeros((1, 2), dtype=np.float32), self.degrees).shape[-1]
-
-    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        return poly_expand(X, self.degrees)
-
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
-
-    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
-        return A @ T
-
-    def penalty(self, T: f32Array) -> f32Array:
-        res = T[..., 1:, :].copy()
-        if res.shape[-2:] == (2, 2):
-            res[..., 0, 0] -= 1
-            res[..., 1, 1] -= 1
-        return (res**2).sum(axis=(-2, -1))
-
-
-@dataclass
 class AffineTransform(PolynomialTransform):
+    """6-DOF affine transform: translation, rotation, scale, shear."""
+
     degrees: int = field(default=1, init=False)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
@@ -181,6 +205,30 @@ class AffineTransform(PolynomialTransform):
 
 @dataclass
 class SimilarityTransform(AffineTransform):
+    """4-DOF similarity transform: translation, rotation, uniform scale."""
+
+    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+        return self._estimate(A, Y, compute_scale=True)
+
+    def _estimate(self, A: f32Array, Y: f32Array, compute_scale: bool) -> f32Array:
+        src_xy = A[..., 1:]
+        dst_xy = Y
+
+        src_center = np.mean(src_xy, axis=-2, keepdims=True)
+        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
+
+        src_centered = src_xy - src_center
+        dst_centered = dst_xy - dst_center
+
+        if compute_scale:
+            M = self._estimate_anisotropic(src_centered, dst_centered)
+        else:
+            M = self._estimate_rigid(src_centered, dst_centered)
+
+        t = dst_center - src_center @ M
+
+        return np.concatenate([t, M], axis=-2)
+
     @staticmethod
     def _estimate_rigid(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
         H = src_centered.swapaxes(-2, -1) @ dst_centered
@@ -244,37 +292,19 @@ class SimilarityTransform(AffineTransform):
 
         return M
 
-    def _estimate(self, A: f32Array, Y: f32Array, compute_scale: bool) -> f32Array:
-        src_xy = A[..., 1:]
-        dst_xy = Y
-
-        src_center = np.mean(src_xy, axis=-2, keepdims=True)
-        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
-
-        src_centered = src_xy - src_center
-        dst_centered = dst_xy - dst_center
-
-        if compute_scale:
-            M = self._estimate_anisotropic(src_centered, dst_centered)
-        else:
-            M = self._estimate_rigid(src_centered, dst_centered)
-
-        t = dst_center - src_center @ M
-
-        return np.concatenate([t, M], axis=-2)
-
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        return self._estimate(A, Y, compute_scale=True)
-
 
 @dataclass
 class RigidTransform(SimilarityTransform):
+    """3-DOF rigid transform: translation and rotation only (no scale)."""
+
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         return self._estimate(A, Y, compute_scale=False)
 
 
 @dataclass
 class BernsteinTransform(Transform):
+    """Transform using Bernstein polynomial basis. Numerically stable on [0,1]^2."""
+
     degrees: int = 2
 
     @property
@@ -299,7 +329,8 @@ class BernsteinTransform(Transform):
         A_T = A.swapaxes(-2, -1)
         return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
 
-    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
+    @staticmethod
+    def transform_points(A: f32Array, T: f32Array) -> f32Array:
         return A @ T
 
     def penalty(self, T: f32Array) -> f32Array:
@@ -319,6 +350,8 @@ class BernsteinTransform(Transform):
 
 @dataclass
 class PerspectiveTransform(Transform):
+    """8-DOF homography/perspective transform. Maps lines to lines."""
+
     @property
     def min_samples(self) -> int:
         return 4
@@ -341,7 +374,8 @@ class PerspectiveTransform(Transform):
         Ts = Ts.swapaxes(1, 2)
         return Ts
 
-    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
+    @staticmethod
+    def transform_points(A: f32Array, T: f32Array) -> f32Array:
         Y_hat = A[..., 0, :3] @ T
         Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
         Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
@@ -365,6 +399,8 @@ class PerspectiveTransform(Transform):
 
 @dataclass
 class ThinPlateSplineTransform(Transform):
+    """Non-rigid transform using thin-plate spline radial basis function."""
+
     @property
     def min_samples(self) -> int:
         return 5
@@ -383,6 +419,7 @@ class ThinPlateSplineTransform(Transform):
         return A
 
     def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
+        """Re-expand design matrix for sampled control points."""
         X = A[..., :-3, -2:]
         Y_sampled = Y[samples]
         A_sampled = self.expand(X[samples], Y_sampled)
@@ -406,7 +443,8 @@ class ThinPlateSplineTransform(Transform):
         X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])
         return np.concatenate([T, X_padded], axis=-1)
 
-    def transform_points(self, A: f32Array, T: f32Array) -> f32Array:
+    @staticmethod
+    def transform_points(A: f32Array, T: f32Array) -> f32Array:
         X_new = A[..., :-3, -2:]
         X_old = T[..., :-3, -2:]
         W = T[..., :-3, :2]
@@ -432,6 +470,7 @@ class ThinPlateSplineTransform(Transform):
             return ((K @ W) + (P @ ab)).astype(np.float32)
 
     def penalty(self, T: f32Array) -> f32Array:
+        """Bending energy penalty: trace(W.T @ K @ W)."""
         W = T[..., :-3, :2]
         X = T[..., :-3, -2:]
         pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
