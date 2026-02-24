@@ -24,7 +24,6 @@ TRANSFORMS: dict[str, Transform] = {
     "rigid": RigidTransform(),
     "similarity": SimilarityTransform(),
     "thin_plate_spline": ThinPlateSplineTransform(),
-    "bernstein2": BernsteinTransform(degrees=2),
 }
 
 app = Typer()
@@ -35,10 +34,17 @@ def main(
     image_path: str,
     template_path: str,
     method: Annotated[str, Option("--method", "-m")] = "perspective",
+    degrees: Annotated[int | None, Option("--degrees", "-d")] = 2,
     out_path: Annotated[str, Option("--out", "-o")] = "registered.png",
 ) -> None:
-    if method not in TRANSFORMS:
-        raise ValueError(f"Unknown method: {method!r}. Available: {list(TRANSFORMS)}")
+    if method == "bernstein":
+        if degrees is None:
+            raise ValueError("--degrees is required for bernstein method")
+        transform: Transform = BernsteinTransform(degrees=degrees)
+    elif method in TRANSFORMS:
+        transform = TRANSFORMS[method]
+    else:
+        raise ValueError(f"Unknown method: {method!r}. Available: {list(TRANSFORMS) + ['bernstein']}")
 
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
@@ -48,7 +54,6 @@ def main(
     if template is None:
         raise ValueError(f"Could not read template from {template_path}")
 
-    transform = TRANSFORMS[method]
     register_image(cast(u8Array, image), cast(u8Array, template), transform)
     print("matrix:")
     print(transform.matrix)
