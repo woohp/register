@@ -177,46 +177,52 @@ class AffineTransform(Transform):
 
 
 @dataclass
-class SimilarityTransform(AffineTransform):
-    """4-DOF similarity transform: translation, rotation, uniform scale."""
+class _CenteredAffineTransform(AffineTransform):
+    """Internal base for affine-like transforms estimated around source/destination centroids."""
 
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        return self._estimate(A, Y, compute_scale=True)
-
-    def _estimate(self, A: f32Array, Y: f32Array, compute_scale: bool) -> f32Array:
         src_xy = A[..., 1:]
         dst_xy = Y
 
         src_center = np.mean(src_xy, axis=-2, keepdims=True)
         dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
 
-        src_centered = src_xy - src_center
-        dst_centered = dst_xy - dst_center
-
-        if compute_scale:
-            M = self._estimate_anisotropic(src_centered, dst_centered)
-        else:
-            M = self._estimate_rigid(src_centered, dst_centered)
-
+        M = self.estimate_centered(src_xy - src_center, dst_xy - dst_center)
         t = dst_center - src_center @ M
 
         return np.concatenate([t, M], axis=-2)
 
-    @staticmethod
-    def _estimate_rigid(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        H = src_centered.swapaxes(-2, -1) @ dst_centered
-        U, _, Vt = np.linalg.svd(H)
-        R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+    @abstractmethod
+    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+        """Estimate the linear 2x2 component from centered source/destination points."""
+        ...
 
-        needs_inverting = np.linalg.det(R_rot) < 0
-        if np.any(needs_inverting):
-            Vt_copy = Vt.copy()
-            Vt_copy[needs_inverting, -1, :] *= -1
-            R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
 
-        return R_rot.swapaxes(-2, -1)
+@dataclass
+class RigidTransform(_CenteredAffineTransform):
+    """3-DOF rigid transform: translation and rotation only (no scale)."""
 
-    def _estimate_anisotropic(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+        return estimate_rigid_matrix(src_centered, dst_centered)
+
+
+@dataclass
+class SimilarityTransform(_CenteredAffineTransform):
+    """4-DOF similarity transform: translation, rotation, uniform scale."""
+
+    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+        R = estimate_rigid_matrix(src_centered, dst_centered)
+        numerator = np.sum((src_centered @ R) * dst_centered, axis=(-2, -1), keepdims=True)
+        denominator = np.sum(src_centered**2, axis=(-2, -1), keepdims=True)
+        scale = numerator / np.maximum(denominator, 1e-8)
+        return scale * R
+
+
+@dataclass
+class AnisotropicSimilarityTransform(_CenteredAffineTransform):
+    """5-DOF transform: translation, rotation, and independent x/y scale."""
+
+    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
         SXX = src_centered.swapaxes(-2, -1) @ src_centered
         SXY = src_centered.swapaxes(-2, -1) @ dst_centered
         Id = np.eye(2, dtype=src_centered.dtype)
@@ -266,12 +272,18 @@ class SimilarityTransform(AffineTransform):
         return M
 
 
-@dataclass
-class RigidTransform(SimilarityTransform):
-    """3-DOF rigid transform: translation and rotation only (no scale)."""
+def estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+    H = src_centered.swapaxes(-2, -1) @ dst_centered
+    U, _, Vt = np.linalg.svd(H)
+    R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
 
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        return self._estimate(A, Y, compute_scale=False)
+    needs_inverting = np.linalg.det(R_rot) < 0
+    if np.any(needs_inverting):
+        Vt_copy = Vt.copy()
+        Vt_copy[needs_inverting, -1, :] *= -1
+        R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
+
+    return R_rot.swapaxes(-2, -1)
 
 
 @dataclass

@@ -84,7 +84,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
         tx = np.random.uniform(-10, 10, (batch_size,))
         ty = np.random.uniform(-10, 10, (batch_size,))
         thetas = np.random.uniform(-np.pi, np.pi, (batch_size,))
-        scales = np.random.uniform(-10, 10, (batch_size,))
+        scales = np.random.uniform(0.1, 10, (batch_size,))
         T = np.array(
             [
                 [tx, np.cos(thetas) * scales, -np.sin(thetas) * scales],
@@ -104,7 +104,31 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     assert estimated_T.dtype == np.float32
 
 
-def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
+def test_similarity_transform_uses_least_squares_uniform_scale_with_noise() -> None:
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(80, 2)).astype(np.float32)
+    A = np.pad(X, [(0, 0), (1, 0)], constant_values=1).astype(np.float32)
+
+    theta = 0.7
+    scale = 2.0
+    c, s = math.cos(theta), math.sin(theta)
+    T = np.array([[1.0, -2.0], [c * scale, s * scale], [-s * scale, c * scale]], dtype=np.float32)
+    Y_without_noise = A @ T
+
+    noise = (rng.normal(size=Y_without_noise.shape) * 0.6).astype(np.float32)
+    noise -= noise.mean(axis=0, keepdims=True)
+    centered_signal = Y_without_noise - Y_without_noise.mean(axis=0, keepdims=True)
+    noise -= centered_signal * (np.sum(centered_signal * noise) / np.sum(centered_signal * centered_signal))
+    Y = Y_without_noise + noise
+
+    similarity = register.transforms.SimilarityTransform(reg=0.0)
+    estimated_T = similarity.estimate(A, Y)
+
+    estimated_scale = np.sqrt(np.sum(estimated_T[1:] ** 2) / 2)
+    assert estimated_scale == pytest.approx(scale, abs=1e-3)
+
+
+def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
     theta = 1.234
     tx: float = -3.0
     ty: float = 5.0
@@ -122,6 +146,33 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     Y = A @ T
 
     similarity = register.transforms.SimilarityTransform(reg=0.0)
+    estimated_T = similarity.estimate(A, Y)
+    estimated_M = estimated_T[1:]
+    estimated_MTM = estimated_M.T @ estimated_M
+
+    assert not np.allclose(estimated_T, T, atol=1e-5)
+    assert estimated_MTM[0, 1] == pytest.approx(0.0, abs=1e-5)
+    assert estimated_MTM[0, 0] == pytest.approx(estimated_MTM[1, 1], abs=1e-5)
+
+
+def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
+    theta = 1.234
+    tx: float = -3.0
+    ty: float = 5.0
+    sx, sy = 0.123, 0.456
+    c, s = math.cos(theta), math.sin(theta)
+
+    D = np.array([[sx, 0], [0, sy]], dtype=np.float32)
+    R = np.array([[c, -s], [s, c]], dtype=np.float32)
+    M = R.T @ D
+    t = np.array([[tx, ty]], dtype=np.float32)
+    T = np.concatenate([t, M], axis=0)
+
+    A = np.random.randn(91, 3).astype(np.float32)
+    A[..., 0] = 1
+    Y = A @ T
+
+    similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
@@ -143,7 +194,7 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.SimilarityTransform(reg=0.0)
+    similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y)
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 

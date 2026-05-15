@@ -8,6 +8,7 @@ from typer import Option, Typer
 from register import generate_warped_image, register_image
 from register.transforms import (
     AffineTransform,
+    AnisotropicSimilarityTransform,
     BernsteinTransform,
     PerspectiveTransform,
     RigidTransform,
@@ -23,6 +24,7 @@ TRANSFORMS: dict[str, Transform] = {
     "affine": AffineTransform(),
     "rigid": RigidTransform(),
     "similarity": SimilarityTransform(),
+    "anisotropic_similarity": AnisotropicSimilarityTransform(),
     "thin_plate_spline": ThinPlateSplineTransform(),
 }
 
