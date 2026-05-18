@@ -29,10 +29,11 @@ nb_f32array = partial(types.Array, types.float32)
     parallel=True,
 )
 def get_distance_squared(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Computes the _squared_ L2 distance between each pair of the two collections of row vectors.
-    Roughly analogous to torch.cdist(x, y)**2.
-    Unlike torch.cdist, this function also supports batched inputs of shape [N, M, D], where
-    N is the batch size, M is the number of rows, and D is the number of columns.
+    """Compute element-wise squared L2 distance between corresponding row vectors.
+
+    For 2-D inputs (N, D): returns (N,) with dist[i] = ||x[i] - y[i]||².
+    For 3-D + 2-D inputs (B, N, D) + (N, D): returns (B, N) with dist[i,j] = ||x[i,j] - y[j]||².
+    For 3-D + 3-D inputs (B, N, D) + (B, N, D): returns (B, N) with dist[i,j] = ||x[i,j] - y[i,j]||².
     """
     dim = x.shape[-1]
 
