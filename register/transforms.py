@@ -4,7 +4,6 @@ import math
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import TypeVar
 
 import cv2
 import numpy as np
@@ -12,7 +11,6 @@ from numpy.typing import NDArray
 
 from .utils import get_distance_squared, get_pairwise_distances_squared
 
-FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 i64Array = NDArray[np.int64]
