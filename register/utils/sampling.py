@@ -1,21 +1,24 @@
 import math
 from random import Random
 
+import numpy as np
+from numpy.typing import NDArray
+
 from . import numba_njit
 
 
-def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> list[list[int]]:
+def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray[np.int64]:
     n_combos = math.comb(N, k)
     n_samples = min(n_combos, max_samples)
 
-    out: list[list[int]] = []
+    out = np.empty((n_samples, k), dtype=np.int64)
     for i in range(n_samples):
         if n_combos < max_samples:
             idx = i
         else:
             idx = rng.randint(0, math.comb(min(k + i, N), k) - 1)
 
-        out.append(xord(k, idx))
+        out[i] = xord(k, idx)
 
     return out
 

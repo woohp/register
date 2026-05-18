@@ -97,10 +97,7 @@ class Transform(ABC):
     def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
         from .utils.sampling import get_random_samples
 
-        samples: i64Array = np.array(
-            get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321)),
-            dtype=np.int64,
-        )
+        samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
 
         b_A, b_Y = self.select(A, Y, samples)
         Ts = self.estimate(b_A, b_Y)
