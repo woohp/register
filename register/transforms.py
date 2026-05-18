@@ -83,7 +83,7 @@ class Transform(ABC):
     def _estimate_sigma(self, A: f32Array, Y: f32Array, T: f32Array) -> float:
         Y_hat = self.transform_points(A, T)
         residuals_sq = get_distance_squared(Y_hat, Y)
-        residuals = np.sqrt(residuals_sq.astype(np.float64))
+        residuals = np.sqrt(residuals_sq)
         median = np.median(residuals)
         mad = np.median(np.abs(residuals - median))
         sigma_pixels: float = max(float(1.4826 * mad), 1e-10)
