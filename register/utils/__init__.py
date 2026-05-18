@@ -1,3 +1,4 @@
+import math
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -232,5 +233,31 @@ def generate_tps_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> 
 
             result[0, y, x] = out_x
             result[1, y, x] = out_y
+
+    return result
+
+
+def generate_bernstein_remap_maps(height: int, width: int, degrees: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
+    """Generate remap maps for a Bernstein polynomial of arbitrary degree.
+
+    Returns an array of shape (2, height, width) containing normalized
+    (x, y) coordinates in [0, 1].
+    """
+    result = np.zeros((2, height, width), dtype=np.float32)
+    max_dim = float(max(height, width))
+
+    y_col = (np.arange(height, dtype=np.float32) / max_dim)[:, np.newaxis]
+    x_row = (np.arange(width, dtype=np.float32) / max_dim)[np.newaxis, :]
+
+    d = degrees
+    idx = 0
+    for j in range(d + 1):
+        by = math.comb(d, j) * (y_col**j) * ((1 - y_col) ** (d - j))
+        for i in range(d + 1):
+            bx = math.comb(d, i) * (x_row**i) * ((1 - x_row) ** (d - i))
+            basis = bx * by
+            result[0] += T[idx, 0] * basis
+            result[1] += T[idx, 1] * basis
+            idx += 1
 
     return result

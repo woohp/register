@@ -327,9 +327,15 @@ class BernsteinTransform(Transform):
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
-        from .utils import generate_bernstein2_remap_maps
+        if self.degrees == 2:
+            from .utils import generate_bernstein2_remap_maps
 
-        map1, map2 = generate_bernstein2_remap_maps(*template_shape, self.matrix)
+            map1, map2 = generate_bernstein2_remap_maps(*template_shape, self.matrix)
+        else:
+            from .utils import generate_bernstein_remap_maps
+
+            map1, map2 = generate_bernstein_remap_maps(*template_shape, self.degrees, self.matrix)
+
         return cv2.remap(  # type: ignore[return-value]
             image,
             (map1 * image_max_size).astype(np.float32),
