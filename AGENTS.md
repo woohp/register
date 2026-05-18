@@ -68,7 +68,7 @@ Example:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal, TypeVar, cast
+from typing import Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -93,12 +93,6 @@ from .utils import get_pairwise_distances_squared
   method_type = Literal["perspective", "affine", "rigid", "similarity", "quadratic", "thin_plate_spline"]
   ```
 
-- Use `TypeVar` for generic array types:
-
-  ```python
-  FloatingNDArray = TypeVar("FloatingNDArray", NDArray[np.float32], NDArray[np.float64])
-  ```
-
 - Use `cast()` when type checker needs help:
 
   ```python
@@ -111,9 +105,8 @@ from .utils import get_pairwise_distances_squared
 
 - Functions: `snake_case` (e.g., `register_image`, `get_distance_squared`)
 - Classes: `PascalCase` (e.g., `AffineTransform`, `ThinPlateSplineTransform`)
-- Constants: `UPPER_SNAKE_CASE` (e.g., `TARGET_MAX_SIZE`, `N_ITERS_RANSAC`)
-- Private functions: No underscore prefix, just keep them module-level
-- Type aliases: `PascalCase` (e.g., `f32Array`, `u8Array`, `method_type`)
+- Constants: `UPPER_SNAKE_CASE` (e.g., `TARGET_MAX_SIZE`)
+- Private functions: Prefix with `_` (e.g., `_estimate_rigid_matrix`, `_geman_mcclure_loss`)
 
 ### Error Handling
 
