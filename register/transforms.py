@@ -208,7 +208,7 @@ class RigidTransform(_CenteredAffineTransform):
     """3-DOF rigid transform: translation and rotation only (no scale)."""
 
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        return estimate_rigid_matrix(src_centered, dst_centered)
+        return _estimate_rigid_matrix(src_centered, dst_centered)
 
 
 @dataclass
@@ -216,7 +216,7 @@ class SimilarityTransform(_CenteredAffineTransform):
     """4-DOF similarity transform: translation, rotation, uniform scale."""
 
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        R = estimate_rigid_matrix(src_centered, dst_centered)
+        R = _estimate_rigid_matrix(src_centered, dst_centered)
         numerator = np.sum((src_centered @ R) * dst_centered, axis=(-2, -1), keepdims=True)
         denominator = np.sum(src_centered**2, axis=(-2, -1), keepdims=True)
         scale = numerator / np.maximum(denominator, 1e-8)
@@ -277,7 +277,7 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
         return M
 
 
-def estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
     H = src_centered.swapaxes(-2, -1) @ dst_centered
     U, _, Vt = np.linalg.svd(H)
     R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
