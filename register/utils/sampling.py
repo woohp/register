@@ -24,8 +24,10 @@ def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray
 
 
 def xord(k: int, sk: int) -> list[int]:
-    """
-    Inverse function of ``ordx``, given output tuple size and compressed index.
+    """Decode a combinatorial index into a k-subset of {0, ..., C(N,k)-1}.
+
+    Based on the combinatorial number system (combinadic representation).
+    Reference: https://en.wikipedia.org/wiki/Combinatorial_number_system
     """
     return [i + r for r, i in enumerate(sord(k, sk))]
 
@@ -48,9 +50,15 @@ def _binomial_safe(n: int, k: int) -> int:
 
 @numba_njit("List(i8)(i8, i8)", cache=True)
 def sord(k: int, sk: int) -> list[int]:
-    """
-    Inverse function of ``ords``, given output tuple size
-    and compressed index.
+    """Decode a combinadic index into a strictly decreasing sequence.
+
+    Given k and an index sk, returns the unique strictly decreasing
+    sequence [c_k, ..., c_1] such that:
+
+        sk = C(c_k, k) + C(c_{k-1}, k-1) + ... + C(c_1, 1)
+
+    This is the inverse of the combinatorial number system encoding.
+    Reference: https://en.wikipedia.org/wiki/Combinatorial_number_system
     """
     idx = [0] * k
     if k == 0:
