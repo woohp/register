@@ -1,99 +1,54 @@
 import math
+from itertools import combinations
 from random import Random
 
 import numpy as np
 from numpy.typing import NDArray
 
-from . import numba_njit
+# Once the prefix saturates at N, dense rejection sampling wastes time on collisions.
+# For small enough total combination spaces, materializing and shuffling the unseen
+# suffix is faster once we need a meaningful fraction of what remains.
+DENSE_SUFFIX_MAX_COMBOS = 100_000
+DENSE_SUFFIX_MIN_FRACTION = 0.25
 
 
 def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray[np.int64]:
     n_combos = math.comb(N, k)
     n_samples = min(n_combos, max_samples)
 
-    out = np.empty((n_samples, k), dtype=np.int64)
+    if n_combos <= max_samples:
+        # Caller asked for at least the full space, so return every combination.
+        return np.array(list(combinations(range(N), k)), dtype=np.int64)
+
+    seen: set[tuple[int, ...]] = set()
+
     for i in range(n_samples):
-        if n_combos < max_samples:
-            idx = i
-        else:
-            idx = rng.randint(0, math.comb(min(k + i, N), k) - 1)
+        # Preserve the original prefix-growth behavior: at iteration i we only draw
+        # from combinations of the first min(k + i, N) points.
+        prefix_size = min(k + i, N)
 
-        out[i] = xord(k, idx)
+        if prefix_size == N:
+            remaining_samples = n_samples - i
+            remaining_combos = n_combos - len(seen)
+            if (
+                n_combos <= DENSE_SUFFIX_MAX_COMBOS
+                and remaining_samples >= DENSE_SUFFIX_MIN_FRACTION * remaining_combos
+            ):
+                # Once the prefix stops growing, every remaining draw comes from the
+                # same full combination space. To avoid too many collisions in the dense
+                # tail, it can be cheaper to materialize the remaining unseen combinations
+                # and keep what we need instead of continuing rejection sampling.
+                all_combos = list(combinations(range(N), k))
+                unseen = [combo for combo in all_combos if combo not in seen]
+                rng.shuffle(unseen)
+                seen.update(unseen[:remaining_samples])
+                break
 
-    return out
+        while True:
+            # Sample a canonical sorted subset so tuple equality matches set equality.
+            sample = tuple(sorted(rng.sample(range(prefix_size), k)))
+            if sample not in seen:
+                seen.add(sample)
+                break
 
-
-def xord(k: int, sk: int) -> list[int]:
-    """Decode a combinatorial index into a k-subset of {0, ..., C(N,k)-1}.
-
-    Based on the combinatorial number system (combinadic representation).
-    Reference: https://en.wikipedia.org/wiki/Combinatorial_number_system
-    """
-    return [i + r for r, i in enumerate(sord(k, sk))]
-
-
-@numba_njit("i8(i8, i8)", cache=True)
-def _binomial_safe(n: int, k: int) -> int:
-    """Compute C(n,k) safely, returning INT64_MAX on overflow."""
-    INT64_MAX = 9223372036854775807
-    if k > n - k:
-        k = n - k
-    if k < 0:
-        return 0
-    result = 1
-    for i in range(k):
-        if result > INT64_MAX // (n - i):
-            return INT64_MAX
-        result = result * (n - i) // (i + 1)
-    return result
-
-
-@numba_njit("List(i8)(i8, i8)", cache=True)
-def sord(k: int, sk: int) -> list[int]:
-    """Decode a combinadic index into a strictly decreasing sequence.
-
-    Given k and an index sk, returns the unique strictly decreasing
-    sequence [c_k, ..., c_1] such that:
-
-        sk = C(c_k, k) + C(c_{k-1}, k-1) + ... + C(c_1, 1)
-
-    This is the inverse of the combinatorial number system encoding.
-    Reference: https://en.wikipedia.org/wiki/Combinatorial_number_system
-    """
-    idx = [0] * k
-    if k == 0:
-        return idx
-
-    s = sk
-    if k > 1:
-        # Binary search for largest j such that C(j+k, k) <= s
-        lo, hi = 0, 1
-        while _binomial_safe(hi + k, k) <= s:
-            hi *= 2
-        j = -1
-        while lo < hi:
-            mid = (lo + hi) // 2
-            if _binomial_safe(mid + k, k) <= s:
-                j = mid
-                lo = mid + 1
-            else:
-                hi = mid
-
-        # After search: C(j+k, k) <= s < C(j+k+1, k)
-        # Original algorithm needs: j such that C(j+k, k) > s, with b = C(j+k-1, k)
-        b = _binomial_safe(j + k, k)
-        j = j + 1
-
-        # Search backwards, decreasing j
-        for r in range(k - 1, 1, -1):
-            idx[r] = j
-            s -= b
-            b = b * (r + 1) // (j + r)
-            while b > s and j > 0:
-                j -= 1
-                b = b * j // (j + r)
-        idx[1] = j
-        s -= b
-
-    idx[0] = s
-    return idx
+    return np.array(list(seen), dtype=np.int64)
