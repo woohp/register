@@ -73,24 +73,12 @@ class Transform(ABC):
         """Fit transform from source X to target Y with point weights. Returns final loss."""
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
-
-        sigma = self._estimate_sigma(A, Y, T)
-
-        T, loss = self._irls(A, Y, weights, T, loss, sigma)
+        T, loss = self._irls(A, Y, weights, T, loss)
         self._matrix = T
         return loss
 
-    def _estimate_sigma(self, A: f32Array, Y: f32Array, T: f32Array) -> float:
-        Y_hat = self.transform_points(A, T)
-        residuals_sq = get_distance_squared(Y_hat, Y)
-        residuals = np.sqrt(residuals_sq)
-        median = np.median(residuals)
-        mad = np.median(np.abs(residuals - median))
-        sigma_pixels: float = max(float(1.4826 * mad), 1e-10)
-        return sigma_pixels**2
-
-    def _geman_mcclure_loss(self, d: f32Array, sigma: float) -> f32Array:
-        return (d / (d + sigma)).astype(np.float32)
+    def _geman_mcclure_loss(self, d: f32Array) -> f32Array:
+        return (d / (d + self.sigma)).astype(np.float32)
 
     def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
         from .utils.sampling import get_random_samples
@@ -102,7 +90,7 @@ class Transform(ABC):
 
         Y_hat = self.transform_points(A, Ts)
         distance_squared = get_distance_squared(Y_hat, Y)
-        objective_losses = np.average(self._geman_mcclure_loss(distance_squared, self.sigma), axis=-1, weights=weights)
+        objective_losses = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
         weights_losses = self.penalty(Ts)
         losses = objective_losses + self.reg * weights_losses
 
@@ -110,14 +98,16 @@ class Transform(ABC):
         return Ts[best_idx], losses[best_idx].item()
 
     def _irls(
-        self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, initial_loss: float, sigma: float
+        self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, initial_loss: float
     ) -> tuple[f32Array, float]:
         last_T = T
         last_loss = initial_loss
 
         Y_hat = self.transform_points(A, T)
         distance_squared = get_distance_squared(Y_hat, Y)
-        w = (weights.astype(np.float64) * sigma / (distance_squared.astype(np.float64) + sigma) ** 2).astype(np.float32)
+        w = (weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2).astype(
+            np.float32
+        )
 
         for _ in range(self.n_iters_irls):
             w_ext = np.ones((A.shape[0],) + w.shape[1:], dtype=w.dtype)
@@ -129,10 +119,10 @@ class Transform(ABC):
 
             Y_hat = self.transform_points(A, T)
             distance_squared = get_distance_squared(Y_hat, Y)
-            w = (weights.astype(np.float64) * sigma / (distance_squared.astype(np.float64) + sigma) ** 2).astype(
-                np.float32
-            )
-            objective_loss = np.average(self._geman_mcclure_loss(distance_squared, sigma), axis=-1, weights=weights)
+            w = (
+                weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2
+            ).astype(np.float32)
+            objective_loss = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
             weights_loss = self.penalty(T)
             loss: float = (objective_loss + weights_loss * self.reg).item()
 
