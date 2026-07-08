@@ -3,7 +3,9 @@ from typing import Annotated, cast
 import cv2
 import numpy as np
 from numpy.typing import NDArray
+from PIL import Image
 from typer import Option, Typer
+from skimage.filters import threshold_local
 
 from register import generate_warped_image, register_image
 from register.transforms import (
@@ -62,6 +64,32 @@ def main(
 
     registered_image = generate_warped_image(cast(u8Array, image), template.shape, transform)
     cv2.imwrite(out_path, registered_image)
+
+    blended = color_blend_3c(registered_image, template)
+    Image.fromarray(blended).save("blended.png")
+
+
+def color_blend_3c(img1, img2, block_size=35, offset=10):
+    # Apply adaptive thresholding
+    thresh1 = threshold_local(img1, block_size, offset=offset)
+    binary1 = img1 < thresh1  # foreground is True
+
+    thresh2 = threshold_local(img2, block_size, offset=offset)
+    binary2 = img2 < thresh2  # foreground is True
+
+    # Create 3-channel RGB output
+    H, W = img1.shape
+    out = np.zeros((H, W, 3), dtype=np.uint8)
+
+    red = binary1 & ~binary2
+    blue = binary2 & ~binary1
+    cyan = binary1 & binary2
+
+    out[red] = [255, 0, 0]
+    out[blue] = [0, 0, 255]
+    out[cyan] = [0, 255, 255]
+
+    return out
 
 
 if __name__ == "__main__":
