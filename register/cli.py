@@ -4,8 +4,8 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 from PIL import Image
-from typer import Option, Typer
 from skimage.filters import threshold_local
+from typer import Option, Typer
 
 from register import generate_warped_image, register_image
 from register.transforms import (
