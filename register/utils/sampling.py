@@ -13,6 +13,9 @@ DENSE_SUFFIX_MIN_FRACTION = 0.25
 
 
 def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray[np.int64]:
+    if k > N:
+        raise ValueError(f"Cannot sample {k} items from a population of {N}")
+
     n_combos = math.comb(N, k)
     n_samples = min(n_combos, max_samples)
 

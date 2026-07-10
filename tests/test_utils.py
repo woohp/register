@@ -53,6 +53,11 @@ def test_get_pairwise_distances_squared(batch_size: int | None, n: int, m: int, 
     np.testing.assert_allclose(output, expected, atol=1e-5)
 
 
+def test_get_random_samples_rejects_too_many_items() -> None:
+    with pytest.raises(ValueError, match="Cannot sample"):
+        get_random_samples(2, 3, 10, Random(4321))
+
+
 def test_get_random_samples_returns_all_combinations_when_below_limit() -> None:
     output = get_random_samples(5, 3, 20, Random(0))
     expected = np.array(
