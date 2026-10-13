@@ -4,6 +4,7 @@ import math
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import cast
 
 import cv2
 import numpy as np
@@ -210,7 +211,7 @@ class SimilarityTransform(_CenteredAffineTransform):
         numerator = np.sum((src_centered @ R) * dst_centered, axis=(-2, -1), keepdims=True)
         denominator = np.sum(src_centered**2, axis=(-2, -1), keepdims=True)
         scale = numerator / np.maximum(denominator, 1e-8)
-        return scale * R
+        return cast(f32Array, scale * R)
 
 
 @dataclass

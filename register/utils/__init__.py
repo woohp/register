@@ -123,7 +123,7 @@ def popcnt(typingctx, src):  # type: ignore[no-untyped-def]
 
 @numba_njit("u1(u8)", inline="always", cache=True)
 def popcount(x: int) -> int:
-    return popcnt(x)
+    return popcnt(x)  # type: ignore[call-arg]
 
 
 @numba_njit("u2[:, ::1](u8[:, ::1], u8[:, ::1])", fastmath=True, boundscheck=False, parallel=True, cache=True)

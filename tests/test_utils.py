@@ -1,4 +1,6 @@
+from collections.abc import Iterable, MutableSequence, Sequence
 from random import Random
+from typing import Any
 
 import numpy as np
 import pytest
@@ -93,11 +95,11 @@ class CountingRandom(Random):
         self.sample_calls = 0
         self.shuffle_calls = 0
 
-    def sample(self, population: range, k: int) -> list[int]:
+    def sample[T](self, population: Sequence[T], k: int, *, counts: Iterable[int] | None = None) -> list[T]:
         self.sample_calls += 1
-        return super().sample(population, k)
+        return super().sample(population, k, counts=counts)
 
-    def shuffle(self, x: list[tuple[int, ...]]) -> None:
+    def shuffle(self, x: MutableSequence[Any]) -> None:
         self.shuffle_calls += 1
         super().shuffle(x)
 
