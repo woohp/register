@@ -16,6 +16,7 @@ Target Python 3.14 and current dependency releases. When dependency work is in s
 - Transforms map **template → image** (`fit(template_points, image_points)`) because warping is inverse mapping: every template pixel samples the image.
 - `fit` expects correspondences sorted by decreasing match quality. RANSAC's sampler (`utils/sampling.py`) is PROSAC-style and draws early hypotheses from a growing prefix.
 - `Transform` methods are batched: RANSAC estimates and scores every hypothesis at once, so `expand`, `estimate`, `transform_points`, and `penalty` must accept arbitrary leading batch dimensions. Keep them vectorized.
+- Penalties measure distortion beyond a similarity (shear, stretch, bending, perspective terms). They exist to tie-break and tame extreme candidates, so never charge for rotation, uniform scale, or translation: documents are legitimately photographed sideways, nearer or farther, and off-center.
 - `estimate` solves weighted least squares with explicit per-point weights. IRLS passes the Geman–McClure derivative normalized the same way as `_loss`, so each step minimizes a quadratic majorizer of the reported loss. Keep `estimate`'s objective consistent with `_loss` and `penalty` when changing regularization.
 
 ## Numerics

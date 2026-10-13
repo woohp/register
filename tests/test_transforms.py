@@ -1,4 +1,5 @@
 import math
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -324,3 +325,52 @@ def test_estimate_perspective_transform(batch_size: int | None) -> None:
     assert estimated_T.shape == (*batch_shape, 3, 3)
     np.testing.assert_allclose(estimated_T, H.swapaxes(-2, -1), atol=1e-3)
     np.testing.assert_allclose(perspective.transform_points(A, estimated_T), Y, atol=1e-4)
+
+
+def similarity_then_shear(shear: float) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Row-vector linear part (x @ L) of a 1-radian rotation scaled by 0.7, followed by `shear`, plus a translation."""
+    c, s = math.cos(1.0), math.sin(1.0)
+    L = 0.7 * np.array([[c, s], [-s, c]]) @ np.array([[1, shear], [0, 1]])
+    return L, np.array([0.3, -0.2])
+
+
+def bernstein_params(degrees: int, L: NDArray[np.float64], t: NDArray[np.float64]) -> NDArray[np.float32]:
+    steps = np.linspace(0, 1, degrees + 1)
+    grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2)
+    return (grid @ L + t).astype(np.float32)
+
+
+def perspective_params(L: NDArray[np.float64], t: NDArray[np.float64]) -> NDArray[np.float32]:
+    return np.block([[L, np.zeros((2, 1))], [t, 1]]).astype(np.float32)
+
+
+@pytest.mark.parametrize(
+    ("transform", "to_params"),
+    [
+        (register.transforms.AffineTransform(), lambda L, t: np.vstack([t, L]).astype(np.float32)),
+        (register.transforms.BernsteinTransform(degrees=2), lambda L, t: bernstein_params(2, L, t)),
+        (register.transforms.BernsteinTransform(degrees=3), lambda L, t: bernstein_params(3, L, t)),
+        (register.transforms.PerspectiveTransform(), perspective_params),
+    ],
+)
+def test_penalty_ignores_similarity_and_charges_shear(
+    transform: register.transforms.Transform,
+    to_params: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float32]],
+) -> None:
+    assert transform.penalty(to_params(*similarity_then_shear(0.0))) == pytest.approx(0.0, abs=1e-6)
+    assert transform.penalty(to_params(*similarity_then_shear(0.3))) > 1e-2
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [register.transforms.AffineTransform(reg=1.0), register.transforms.BernsteinTransform(degrees=2, reg=1.0)],
+)
+def test_strong_regularization_does_not_bias_similarity_fits(transform: register.transforms.Transform) -> None:
+    rng = np.random.default_rng(0)
+    L, t = similarity_then_shear(0.0)
+    X = rng.uniform(0, 1, (40, 2)).astype(np.float32)
+    Y = (X @ L + t).astype(np.float32)
+
+    A = transform.expand(X, Y)
+    estimated_T = transform.estimate(A, Y, uniform_weights(Y))
+    np.testing.assert_allclose(transform.transform_points(A, estimated_T), Y, atol=1e-4)
