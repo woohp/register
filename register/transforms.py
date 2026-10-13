@@ -170,7 +170,7 @@ class AffineTransform(_LinearTransform):
         T[1:] *= image_max_size / template_max_size
         M = np.roll(T, -1, axis=0).T
         return cast(
-            u8Array, cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
+            u8Array, cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
         )
 
 
@@ -341,7 +341,7 @@ class PerspectiveTransform(Transform):
         T[:2, 2] /= template_max_size
         return cast(
             u8Array,
-            cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP),
+            cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP),
         )
 
 
@@ -418,4 +418,4 @@ def _tps_kernel(X1: f32Array, X2: f32Array) -> f32Array:
 def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
     """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
     maps = maps * np.float32(max(image.shape[:2]))
-    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_AREA))
+    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_LINEAR))
