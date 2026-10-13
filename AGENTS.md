@@ -6,6 +6,7 @@ Target Python 3.14 and current dependency releases. When dependency work is in s
 
 ## Workflow
 
+- `docs/known-issues.md` records known shortcomings, what the evidence showed, and next steps. Read it before tuning regularization, the loss, or matching, and update it when an item is resolved or new evidence arrives.
 - `make lint` (ruff + mypy) and `pytest` must pass; `make format` applies safe fixes.
 - `tests/test_register.py` deliberately writes `registered_<method>.png` into the working directory so results can be inspected visually.
 - Prefer outcome-based tests: recover a known transform from synthetic points, and judge real-image registration by ink overlap with the template. Seed randomness with a local `np.random.default_rng`.
