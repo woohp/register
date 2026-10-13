@@ -41,7 +41,7 @@ def get_distance_squared(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDAr
         distances = np.empty((x.shape[0],), dtype=x.dtype)
         for i in numba.prange(x.shape[0]):
             d = 0.0
-            for j in numba.prange(dim):
+            for j in range(dim):
                 d += (x[i, j] - y[i, j]) ** 2
             distances[i] = d
 
@@ -50,18 +50,17 @@ def get_distance_squared(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDAr
 
         if y.ndim == 2:
             for i in numba.prange(x.shape[0]):
-                for j in numba.prange(x.shape[1]):
+                for j in range(x.shape[1]):
                     d = 0.0
-                    for k in numba.prange(dim):
+                    for k in range(dim):
                         d += (x[i, j, k] - y[j, k]) ** 2
                     distances[i, j] = d
 
         elif y.ndim == 3:
-            distances = np.empty((x.shape[0], x.shape[1]), dtype=x.dtype)
             for i in numba.prange(x.shape[0]):
-                for j in numba.prange(x.shape[1]):
+                for j in range(x.shape[1]):
                     d = 0.0
-                    for k in numba.prange(dim):
+                    for k in range(dim):
                         d += (x[i, j, k] - y[i, j, k]) ** 2
                     distances[i, j] = d
 
@@ -91,7 +90,7 @@ def get_pairwise_distances_squared(A: NDArray[np.float32], B: NDArray[np.float32
     if A.ndim == 2:
         distances = np.empty((A.shape[0], B.shape[0]), dtype=A.dtype)
         for i in numba.prange(A.shape[0]):
-            for j in numba.prange(B.shape[0]):
+            for j in range(B.shape[0]):
                 d = 0.0
                 for k in range(dim):
                     d += (A[i, k] - B[j, k]) ** 2
@@ -100,8 +99,8 @@ def get_pairwise_distances_squared(A: NDArray[np.float32], B: NDArray[np.float32
     else:
         distances = np.empty((A.shape[0], A.shape[1], B.shape[1]), dtype=A.dtype)
         for b in numba.prange(A.shape[0]):
-            for i in numba.prange(A.shape[1]):
-                for j in numba.prange(B.shape[1]):
+            for i in range(A.shape[1]):
+                for j in range(B.shape[1]):
                     d = 0.0
                     for k in range(dim):
                         d += (A[b, i, k] - B[b, j, k]) ** 2
@@ -130,7 +129,7 @@ def hamming_distance_matrix(X: NDArray[np.uint64], Y: NDArray[np.uint64]) -> NDA
     result = np.empty((X.shape[0], Y.shape[0]), dtype=np.uint16)
 
     for i in numba.prange(X.shape[0]):
-        for j in numba.prange(Y.shape[0]):
+        for j in range(Y.shape[0]):
             result[i, j] = (
                 popcount(X[i, 0] ^ Y[j, 0])
                 + popcount(X[i, 1] ^ Y[j, 1])
@@ -156,15 +155,13 @@ def generate_tps_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> 
     P = T[:num_points, 2:]
 
     result = np.empty((2, height, width), dtype=np.float32)
+    # T was fitted on coordinates normalized by the template's longest side.
+    max_dim = float(max(height, width))
 
     for y in numba.prange(height):
-        # normalize y to [0, 1] relative to template max size ???
-        # Actually T was estimated on normalized coordinates [0, 1]
-        # So we need to normalize pixel coordinates
-        max_dim = float(max(height, width))
         fy = float(y) / max_dim
 
-        for x in numba.prange(width):
+        for x in range(width):
             fx = float(x) / max_dim
 
             # 1. Base affine part
