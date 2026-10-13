@@ -32,7 +32,7 @@ class Transform(ABC):
     sigma: float = 0.00003
     n_iters_ransac: int = 4_000
     n_iters_irls: int = 50
-    _matrix: f32Array | None = field(default=None, repr=False)
+    _matrix: f32Array | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     @abstractmethod
