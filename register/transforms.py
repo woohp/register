@@ -11,8 +11,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .utils import (
-    generate_bernstein2_remap_maps,
-    generate_bernstein_remap_maps,
     generate_tps_remap_maps,
     get_distance_squared,
     get_pairwise_distances_squared,
@@ -310,29 +308,29 @@ class BernsteinTransform(_LinearTransform):
         return (self.degrees + 1) ** 2
 
     def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        x = X[..., 0:1]
-        y = X[..., 1:2]
-        d = self.degrees
-
-        basis_list = []
-        for j in range(d + 1):
-            by = math.comb(d, j) * (y**j) * ((1 - y) ** (d - j))
-            for i in range(d + 1):
-                bx = math.comb(d, i) * (x**i) * ((1 - x) ** (d - i))
-                basis_list.append(bx * by)
-
-        return np.concatenate(basis_list, axis=-1)
+        Bx = _bernstein_basis(X[..., 0], self.degrees)
+        By = _bernstein_basis(X[..., 1], self.degrees)
+        return (By[..., :, None] * Bx[..., None, :]).reshape(*X.shape[:-1], -1)
 
     def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        if self.degrees == 2:
-            maps = generate_bernstein2_remap_maps(*template_shape, self.matrix)
-        else:
-            maps = generate_bernstein_remap_maps(*template_shape, self.degrees, self.matrix)
+        height, width = template_shape
+        template_max_size = np.float32(max(template_shape))
+        By = _bernstein_basis(np.arange(height, dtype=np.float32) / template_max_size, self.degrees)
+        Bx = _bernstein_basis(np.arange(width, dtype=np.float32) / template_max_size, self.degrees)
+        # The basis is a tensor product (rows of T ordered y-major), so each coordinate map is By @ T_c @ Bx.T.
+        T = self.matrix.reshape(self.degrees + 1, self.degrees + 1, 2).transpose(2, 0, 1)
+        return _remap(image, By @ T @ Bx.T)
 
-        return _remap(image, maps)
+
+def _bernstein_basis(t: f32Array, degrees: int) -> f32Array:
+    """Evaluate the `degrees + 1` Bernstein basis polynomials at t, along a new trailing axis."""
+    k = np.arange(degrees + 1)
+    binomials = np.array([math.comb(degrees, i) for i in k], dtype=np.float32)
+    t = t[..., None]
+    return (binomials * t**k * (1 - t) ** (degrees - k)).astype(np.float32)
 
 
 @dataclass
@@ -472,7 +470,7 @@ class ThinPlateSplineTransform(Transform):
         return _remap(image, generate_tps_remap_maps(*template_shape, self.matrix))
 
 
-def _remap(image: u8Array, maps: f32Array) -> u8Array:
+def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
     """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
     maps = maps * np.float32(max(image.shape[:2]))
     return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_AREA))

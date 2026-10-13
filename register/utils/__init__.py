@@ -1,4 +1,3 @@
-import math
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -147,55 +146,6 @@ def hamming_distance_matrix(X: NDArray[np.uint64], Y: NDArray[np.uint64]) -> NDA
 
 
 @numba_njit("f4[:, :, ::1](i4, i4, f4[:, ::1])", cache=True, fastmath=True, boundscheck=False, parallel=True)
-def generate_bernstein2_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
-    result = np.empty((2, height, width), dtype=np.float32)
-    max_dim = float(max(height, width))
-
-    for y in numba.prange(height):
-        fy = float(y) / max_dim
-        for x in numba.prange(width):
-            fx = float(x) / max_dim
-
-            one_minus_x = 1.0 - fx
-            one_minus_y = 1.0 - fy
-
-            b00 = one_minus_x * one_minus_x * one_minus_y * one_minus_y
-            b10 = 2.0 * fx * one_minus_x * one_minus_y * one_minus_y
-            b20 = fx * fx * one_minus_y * one_minus_y
-            b01 = one_minus_x * one_minus_x * 2.0 * fy * one_minus_y
-            b11 = 2.0 * fx * one_minus_x * 2.0 * fy * one_minus_y
-            b21 = fx * fx * 2.0 * fy * one_minus_y
-            b02 = one_minus_x * one_minus_x * fy * fy
-            b12 = 2.0 * fx * one_minus_x * fy * fy
-            b22 = fx * fx * fy * fy
-
-            result[0, y, x] = (
-                T[0, 0] * b00
-                + T[1, 0] * b10
-                + T[2, 0] * b20
-                + T[3, 0] * b01
-                + T[4, 0] * b11
-                + T[5, 0] * b21
-                + T[6, 0] * b02
-                + T[7, 0] * b12
-                + T[8, 0] * b22
-            )
-            result[1, y, x] = (
-                T[0, 1] * b00
-                + T[1, 1] * b10
-                + T[2, 1] * b20
-                + T[3, 1] * b01
-                + T[4, 1] * b11
-                + T[5, 1] * b21
-                + T[6, 1] * b02
-                + T[7, 1] * b12
-                + T[8, 1] * b22
-            )
-
-    return result
-
-
-@numba_njit("f4[:, :, ::1](i4, i4, f4[:, ::1])", cache=True, fastmath=True, boundscheck=False, parallel=True)
 def generate_tps_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
     # T: [N+3, 4]
     # first 2 cols: weights and affine coeffs
@@ -233,31 +183,5 @@ def generate_tps_remap_maps(height: int, width: int, T: NDArray[np.float32]) -> 
 
             result[0, y, x] = out_x
             result[1, y, x] = out_y
-
-    return result
-
-
-def generate_bernstein_remap_maps(height: int, width: int, degrees: int, T: NDArray[np.float32]) -> NDArray[np.float32]:
-    """Generate remap maps for a Bernstein polynomial of arbitrary degree.
-
-    Returns an array of shape (2, height, width) containing normalized
-    (x, y) coordinates in [0, 1].
-    """
-    result = np.zeros((2, height, width), dtype=np.float32)
-    max_dim = float(max(height, width))
-
-    y_col = (np.arange(height, dtype=np.float32) / max_dim)[:, np.newaxis]
-    x_row = (np.arange(width, dtype=np.float32) / max_dim)[np.newaxis, :]
-
-    d = degrees
-    idx = 0
-    for j in range(d + 1):
-        by = math.comb(d, j) * (y_col**j) * ((1 - y_col) ** (d - j))
-        for i in range(d + 1):
-            bx = math.comb(d, i) * (x_row**i) * ((1 - x_row) ** (d - i))
-            basis = bx * by
-            result[0] += T[idx, 0] * basis
-            result[1] += T[idx, 1] * basis
-            idx += 1
 
     return result
