@@ -1,10 +1,9 @@
+from enum import StrEnum
 from typing import Annotated, cast
 
 import cv2
 import numpy as np
 from numpy.typing import NDArray
-from PIL import Image
-from skimage.filters import threshold_local
 from typer import Option, Typer
 
 from register import generate_warped_image, register_image
@@ -21,13 +20,24 @@ from register.transforms import (
 
 u8Array = NDArray[np.uint8]
 
-TRANSFORMS: dict[str, Transform] = {
-    "perspective": PerspectiveTransform(),
-    "affine": AffineTransform(),
-    "rigid": RigidTransform(),
-    "similarity": SimilarityTransform(),
-    "anisotropic_similarity": AnisotropicSimilarityTransform(),
-    "thin_plate_spline": ThinPlateSplineTransform(),
+
+class Method(StrEnum):
+    perspective = "perspective"
+    affine = "affine"
+    rigid = "rigid"
+    similarity = "similarity"
+    anisotropic_similarity = "anisotropic_similarity"
+    bernstein = "bernstein"
+    thin_plate_spline = "thin_plate_spline"
+
+
+TRANSFORMS: dict[Method, type[Transform]] = {
+    Method.perspective: PerspectiveTransform,
+    Method.affine: AffineTransform,
+    Method.rigid: RigidTransform,
+    Method.similarity: SimilarityTransform,
+    Method.anisotropic_similarity: AnisotropicSimilarityTransform,
+    Method.thin_plate_spline: ThinPlateSplineTransform,
 }
 
 app = Typer()
@@ -37,18 +47,14 @@ app = Typer()
 def main(
     image_path: str,
     template_path: str,
-    method: Annotated[str, Option("--method", "-m")] = "perspective",
-    degrees: Annotated[int | None, Option("--degrees", "-d")] = 2,
+    method: Annotated[Method, Option("--method", "-m")] = Method.perspective,
+    degrees: Annotated[int, Option("--degrees", "-d", help="Polynomial degree for the bernstein method.")] = 2,
     out_path: Annotated[str, Option("--out", "-o")] = "registered.png",
+    blend_path: Annotated[
+        str | None, Option("--blend", help="Also write a red/blue/cyan overlay of the result against the template.")
+    ] = None,
 ) -> None:
-    if method == "bernstein":
-        if degrees is None:
-            raise ValueError("--degrees is required for bernstein method")
-        transform: Transform = BernsteinTransform(degrees=degrees)
-    elif method in TRANSFORMS:
-        transform = TRANSFORMS[method]
-    else:
-        raise ValueError(f"Unknown method: {method!r}. Available: {list(TRANSFORMS) + ['bernstein']}")
+    transform = BernsteinTransform(degrees=degrees) if method is Method.bernstein else TRANSFORMS[method]()
 
     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
@@ -65,31 +71,25 @@ def main(
     registered_image = generate_warped_image(cast(u8Array, image), template.shape, transform)
     cv2.imwrite(out_path, registered_image)
 
-    blended = color_blend_3c(registered_image, template)
-    Image.fromarray(blended).save("blended.png")
+    if blend_path is not None:
+        cv2.imwrite(blend_path, color_blend(registered_image, cast(u8Array, template)))
 
 
-def color_blend_3c(img1, img2, block_size=35, offset=10):
-    # Apply adaptive thresholding
-    thresh1 = threshold_local(img1, block_size, offset=offset)
-    binary1 = img1 < thresh1  # foreground is True
+def color_blend(image: u8Array, template: u8Array, block_size: int = 35, offset: int = 10) -> u8Array:
+    """Color foreground pixels (BGR): red where only `image` has ink, blue for only `template`, cyan for both."""
+    image_ink = _foreground(image, block_size, offset)
+    template_ink = _foreground(template, block_size, offset)
 
-    thresh2 = threshold_local(img2, block_size, offset=offset)
-    binary2 = img2 < thresh2  # foreground is True
-
-    # Create 3-channel RGB output
-    H, W = img1.shape
-    out = np.zeros((H, W, 3), dtype=np.uint8)
-
-    red = binary1 & ~binary2
-    blue = binary2 & ~binary1
-    cyan = binary1 & binary2
-
-    out[red] = [255, 0, 0]
-    out[blue] = [0, 0, 255]
-    out[cyan] = [0, 255, 255]
-
+    out = np.zeros((*image.shape, 3), dtype=np.uint8)
+    out[image_ink & ~template_ink] = (0, 0, 255)
+    out[template_ink & ~image_ink] = (255, 0, 0)
+    out[image_ink & template_ink] = (255, 255, 0)
     return out
+
+
+def _foreground(image: u8Array, block_size: int, offset: int) -> NDArray[np.bool]:
+    binary = cv2.adaptiveThreshold(image, 1, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, block_size, offset)
+    return binary.astype(bool)
 
 
 if __name__ == "__main__":
