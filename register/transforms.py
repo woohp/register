@@ -10,7 +10,14 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .utils import get_distance_squared, get_pairwise_distances_squared
+from .utils import (
+    generate_bernstein2_remap_maps,
+    generate_bernstein_remap_maps,
+    generate_tps_remap_maps,
+    get_distance_squared,
+    get_pairwise_distances_squared,
+)
+from .utils.sampling import get_random_samples
 
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
@@ -82,8 +89,6 @@ class Transform(ABC):
         return (d / (d + self.sigma)).astype(np.float32)
 
     def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
-        from .utils.sampling import get_random_samples
-
         samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
 
         b_A, b_Y = self.select(A, Y, samples)
@@ -322,12 +327,8 @@ class BernsteinTransform(Transform):
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         if self.degrees == 2:
-            from .utils import generate_bernstein2_remap_maps
-
             maps = generate_bernstein2_remap_maps(*template_shape, self.matrix)
         else:
-            from .utils import generate_bernstein_remap_maps
-
             maps = generate_bernstein_remap_maps(*template_shape, self.degrees, self.matrix)
 
         return _remap(image, maps)
@@ -467,8 +468,6 @@ class ThinPlateSplineTransform(Transform):
         return np.einsum("...id,...ij,...jd->...", W, K, W)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        from .utils import generate_tps_remap_maps
-
         return _remap(image, generate_tps_remap_maps(*template_shape, self.matrix))
 
 
