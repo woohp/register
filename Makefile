@@ -1,6 +1,6 @@
-.PHONY: format
+.PHONY: format fformat lint
 
-python_files = register tests setup.py
+python_files = register tests
 
 format:
 	ruff check --fix-only --ignore F401 $(python_files)

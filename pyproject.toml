@@ -1,9 +1,14 @@
 [project]
+dependencies = [
+    "numba >= 0.68.0",
+    "numpy >= 2.5.4",
+    "opencv-contrib-python-headless >= 5.0.0.93",
+]
 description = "Image Registration"
 name = "register"
-requires-python = ">=3.13"
+readme = "README.md"
+requires-python = ">=3.14"
 version = "0.0.1"
-# readme = "README.md"
 
 [project.scripts]
 register-image = "register.cli:app"
@@ -11,28 +16,26 @@ register-image = "register.cli:app"
 [build-system]
 build-backend = "setuptools.build_meta"
 requires = [
-    "numba>=0.65.1",
-    "numpy>=2.4.2",
-    "setuptools >= 82.0.0",
-    "wheel",
+    "setuptools >= 84.0.0",
 ]
 
 [project.optional-dependencies]
 cli = [
-    "typer-slim>=0.24.0",
+    "typer >= 0.27.3",
 ]
 dev = [
     "ipdb",
-    "mypy >= 1.21.0",
+    "mypy >= 2.4.0",
+    "pillow >= 12.3.0",
     "pytest",
-    "ruff",
-]
-opencv = [
-    "opencv-contrib-python-headless",
+    "ruff >= 0.17.0",
 ]
 
+[tool.setuptools.package-data]
+"register" = ["py.typed"]
+
 [tool.setuptools.packages.find]
-exclude = ["tests"]
+include = ["register*"]
 
 [tool.pytest.ini_options]
 addopts = "-s"
@@ -46,7 +49,7 @@ check_untyped_defs = true
 extra_checks = true
 ignore_missing_imports = true
 no_implicit_optional = true
-python_version = "3.13"
+python_version = "3.14"
 strict_equality = true
 warn_redundant_casts = true
 warn_unreachable = true
