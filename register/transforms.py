@@ -321,9 +321,9 @@ class PerspectiveTransform(Transform):
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
         Y_hat = A[..., 0, :3] @ T
-        Y_hat[Y_hat == 0] = np.finfo(Y_hat.dtype).eps
-        Y_hat = Y_hat[..., :-1] / Y_hat[..., -1:]
-        return Y_hat.astype(np.float32)
+        w = Y_hat[..., -1:]
+        w = np.where(w == 0, np.finfo(w.dtype).eps, w)
+        return (Y_hat[..., :-1] / w).astype(np.float32)
 
     def penalty(self, T: f32Array) -> f32Array:
         res = T.copy()
