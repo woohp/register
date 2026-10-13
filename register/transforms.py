@@ -365,9 +365,7 @@ class ThinPlateSplineTransform(Transform):
         return 5
 
     def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
-        K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
-
+        K = _tps_kernel(X, X)
         P = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
         zeros = np.zeros((*X.shape[:-2], 3, 3), dtype=X.dtype)
 
@@ -409,35 +407,28 @@ class ThinPlateSplineTransform(Transform):
         W = T[..., :-3, :2]
         ab = T[..., -3:, :2]
 
-        if T.ndim == 3:
-            X_new_batch = X_new[None].repeat(T.shape[0], axis=0) if X_new.ndim == 2 else X_new
-            pairwise_distance_squared = get_pairwise_distances_squared(
-                X_new_batch.astype(np.float32), X_old.astype(np.float32)
-            )
-        else:
-            pairwise_distance_squared = get_pairwise_distances_squared(
-                X_new.astype(np.float32), X_old.astype(np.float32)
-            )
-
-        K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
+        K = _tps_kernel(X_new, X_old)
         P = np.pad(X_new, [(0, 0)] * (X_new.ndim - 1) + [(1, 0)], constant_values=1)
-
-        if T.ndim == 3:
-            P_for_matmul = P[None] if P.ndim == 2 else P
-            return ((K @ W) + (P_for_matmul @ ab)).astype(np.float32)
-        else:
-            return ((K @ W) + (P @ ab)).astype(np.float32)
+        return K @ W + P @ ab
 
     def penalty(self, T: f32Array) -> f32Array:
         """Bending energy penalty: trace(W.T @ K @ W)."""
         W = T[..., :-3, :2]
         X = T[..., :-3, -2:]
-        pairwise_distance_squared = get_pairwise_distances_squared(X.astype(np.float32), X.astype(np.float32))
-        K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
+        K = _tps_kernel(X, X)
         return np.einsum("...id,...ij,...jd->...", W, K, W)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         return _remap(image, generate_tps_remap_maps(*template_shape, self.matrix))
+
+
+def _tps_kernel(X1: f32Array, X2: f32Array) -> f32Array:
+    """TPS radial basis U = r² log r² between every point of X1 and every point of X2, broadcasting batch dims."""
+    batch_shape = np.broadcast_shapes(X1.shape[:-2], X2.shape[:-2])
+    X1 = np.broadcast_to(X1, batch_shape + X1.shape[-2:])
+    X2 = np.broadcast_to(X2, batch_shape + X2.shape[-2:])
+    distance_squared = get_pairwise_distances_squared(X1, X2)
+    return distance_squared * np.log(distance_squared.clip(min=1e-6))
 
 
 def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
