@@ -78,7 +78,11 @@ class Transform(ABC):
         return self._matrix
 
     def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> float:
-        """Fit transform from source X to target Y with point weights. Returns final loss."""
+        """Fit transform from source X to target Y with point weights. Returns final loss.
+
+        Correspondences must be sorted by decreasing match quality: RANSAC draws its early hypotheses from a
+        growing prefix of the points (PROSAC-style), so unsorted input silently degrades the fit.
+        """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
         T, loss = self._irls(A, Y, weights, T, loss)
