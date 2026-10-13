@@ -18,9 +18,10 @@ from register.utils.sampling import get_random_samples
     ],
 )
 def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int) -> None:
+    rng = np.random.default_rng(0)
     shape = (num_points, dim) if batch_size is None else (batch_size, num_points, dim)
-    x = np.random.normal(0, 1, shape).astype(np.float32)
-    y = np.random.normal(0, 1, shape).astype(np.float32)
+    x = rng.normal(0, 1, shape).astype(np.float32)
+    y = rng.normal(0, 1, shape).astype(np.float32)
 
     expected = np.sum((x - y) ** 2, axis=-1)
     np.testing.assert_allclose(get_distance_squared(x, y), expected, atol=1e-5)
@@ -34,11 +35,12 @@ def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int)
     ],
 )
 def test_get_pairwise_distances_squared(batch_size: int | None, n: int, m: int, dim: int) -> None:
+    rng = np.random.default_rng(0)
     x_shape = (n, dim) if batch_size is None else (batch_size, n, dim)
     y_shape = (m, dim) if batch_size is None else (batch_size, m, dim)
 
-    x = np.random.normal(0, 1, x_shape).astype(np.float32)
-    y = np.random.normal(0, 1, y_shape).astype(np.float32)
+    x = rng.normal(0, 1, x_shape).astype(np.float32)
+    y = rng.normal(0, 1, y_shape).astype(np.float32)
 
     expected: NDArray[np.float32]
     expected_shape: tuple[int, ...]

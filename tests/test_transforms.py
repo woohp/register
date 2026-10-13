@@ -13,6 +13,7 @@ def uniform_weights(Y: NDArray[np.float32]) -> NDArray[np.float32]:
 
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_rigid_transform(batch_size: int | None) -> None:
+    rng = np.random.default_rng(0)
     T: NDArray[np.float32]
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
@@ -30,12 +31,12 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
             ],
             dtype=np.float32,
         ).T
-        A = np.random.randn(91, 3).astype(np.float32)
+        A = rng.standard_normal((91, 3)).astype(np.float32)
         expected_shape = (3, 2)
     else:
-        tx = np.random.uniform(-10, 10, (batch_size,))
-        ty = np.random.uniform(-10, 10, (batch_size,))
-        thetas = np.random.uniform(-np.pi, np.pi, (batch_size,))
+        tx = rng.uniform(-10, 10, (batch_size,))
+        ty = rng.uniform(-10, 10, (batch_size,))
+        thetas = rng.uniform(-np.pi, np.pi, (batch_size,))
         T = np.array(
             [
                 [tx, np.cos(thetas), -np.sin(thetas)],
@@ -43,7 +44,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
             ],
             dtype=np.float32,
         ).transpose(2, 1, 0)
-        A = np.random.randn(batch_size, 91, 3).astype(np.float32)
+        A = rng.standard_normal((batch_size, 91, 3)).astype(np.float32)
         expected_shape = (batch_size, 3, 2)
 
     A[..., 0] = 1
@@ -64,6 +65,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
 
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_similarity_transform(batch_size: int | None) -> None:
+    rng = np.random.default_rng(0)
     T: NDArray[np.float32]
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
@@ -82,13 +84,13 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
             ],
             dtype=np.float32,
         ).T
-        A = np.random.randn(91, 3).astype(np.float32)
+        A = rng.standard_normal((91, 3)).astype(np.float32)
         expected_shape = (3, 2)
     else:
-        tx = np.random.uniform(-10, 10, (batch_size,))
-        ty = np.random.uniform(-10, 10, (batch_size,))
-        thetas = np.random.uniform(-np.pi, np.pi, (batch_size,))
-        scales = np.random.uniform(0.1, 10, (batch_size,))
+        tx = rng.uniform(-10, 10, (batch_size,))
+        ty = rng.uniform(-10, 10, (batch_size,))
+        thetas = rng.uniform(-np.pi, np.pi, (batch_size,))
+        scales = rng.uniform(0.1, 10, (batch_size,))
         T = np.array(
             [
                 [tx, np.cos(thetas) * scales, -np.sin(thetas) * scales],
@@ -96,7 +98,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
             ],
             dtype=np.float32,
         ).transpose(2, 1, 0)
-        A = np.random.randn(batch_size, 91, 3).astype(np.float32)
+        A = rng.standard_normal((batch_size, 91, 3)).astype(np.float32)
         expected_shape = (batch_size, 3, 2)
 
     A[..., 0] = 1
@@ -133,6 +135,7 @@ def test_similarity_transform_uses_least_squares_uniform_scale_with_noise() -> N
 
 
 def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
+    rng = np.random.default_rng(0)
     theta = 1.234
     tx: float = -3.0
     ty: float = 5.0
@@ -145,7 +148,7 @@ def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
     t = np.array([[tx, ty]], dtype=np.float32)
     T = np.concatenate([t, M], axis=0)
 
-    A = np.random.randn(91, 3).astype(np.float32)
+    A = rng.standard_normal((91, 3)).astype(np.float32)
     A[..., 0] = 1
     Y = A @ T
 
@@ -160,6 +163,7 @@ def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
 
 
 def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
+    rng = np.random.default_rng(0)
     theta = 1.234
     tx: float = -3.0
     ty: float = 5.0
@@ -172,7 +176,7 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     t = np.array([[tx, ty]], dtype=np.float32)
     T = np.concatenate([t, M], axis=0)
 
-    A = np.random.randn(91, 3).astype(np.float32)
+    A = rng.standard_normal((91, 3)).astype(np.float32)
     A[..., 0] = 1
     Y = A @ T
 
@@ -182,6 +186,7 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
 
 
 def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
+    rng = np.random.default_rng(0)
     theta = 1.234
     tx: float = -3.0
     ty: float = 5.0
@@ -194,7 +199,7 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     t = np.array([[tx, ty]], dtype=np.float32)
     T = np.concatenate([t, M], axis=0)
 
-    A = np.random.randn(91, 3).astype(np.float32)
+    A = rng.standard_normal((91, 3)).astype(np.float32)
     A[..., 0] = 1
     Y = A @ T
 
@@ -204,10 +209,10 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
 
 
 def test_estimate_thin_plate_spline_transform() -> None:
-    np.random.seed(42)
+    rng = np.random.default_rng(42)
     num_points = 50
-    X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
-    Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
+    X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
+    Y = X + rng.normal(0, 0.01, (num_points, 2)).astype(np.float32)
 
     tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
     A = tps.expand(X, Y)
@@ -219,21 +224,20 @@ def test_estimate_thin_plate_spline_transform() -> None:
 
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> None:
+    rng = np.random.default_rng(0)
     num_points = 50
     tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
 
     if batch_size is None:
-        X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
-        Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
+        X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
+        Y = X + rng.normal(0, 0.01, (num_points, 2)).astype(np.float32)
         A = tps.expand(X, Y)
         estimated_T = tps.estimate(A, Y, uniform_weights(Y))
         Y_hat = tps.transform_points(A, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
     else:
-        X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
-        Y = X[None].repeat(batch_size, axis=0) + np.random.normal(0, 0.01, (batch_size, num_points, 2)).astype(
-            np.float32
-        )
+        X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
+        Y = X[None].repeat(batch_size, axis=0) + rng.normal(0, 0.01, (batch_size, num_points, 2)).astype(np.float32)
         A_init = tps.expand(X, Y[0])
         A_batched = A_init[None].repeat(batch_size, axis=0)
         estimated_T = tps.estimate(A_batched, Y, uniform_weights(Y))
@@ -242,8 +246,8 @@ def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> N
 
 
 def test_bernstein_basis_partition_of_unity() -> None:
-    np.random.seed(42)
-    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+    rng = np.random.default_rng(42)
+    X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
 
     bernstein = register.transforms.BernsteinTransform(degrees=2)
     A1 = bernstein.expand(X, X)
@@ -252,8 +256,8 @@ def test_bernstein_basis_partition_of_unity() -> None:
 
 
 def test_bernstein_basis_nonnegative() -> None:
-    np.random.seed(42)
-    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+    rng = np.random.default_rng(42)
+    X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
 
     bernstein = register.transforms.BernsteinTransform(degrees=2)
     A2 = bernstein.expand(X, X)
@@ -261,10 +265,10 @@ def test_bernstein_basis_nonnegative() -> None:
 
 
 def test_estimate_quadratic_bernstein_transform() -> None:
-    np.random.seed(42)
-    X = np.random.uniform(0, 1, (100, 2)).astype(np.float32)
+    rng = np.random.default_rng(42)
+    X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
 
-    T_true = np.random.randn(9, 2).astype(np.float32) * 0.1
+    T_true = rng.standard_normal((9, 2)).astype(np.float32) * 0.1
 
     bernstein = register.transforms.BernsteinTransform(degrees=2, reg=0.0)
     A = bernstein.expand(X, X)
