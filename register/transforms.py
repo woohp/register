@@ -58,6 +58,10 @@ class Transform(ABC):
         """
         ...
 
+    def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
+        """Estimate RANSAC hypotheses from (batched) minimal samples. Their penalty is applied when scoring them."""
+        return self.estimate(A, Y, np.ones(Y.shape[:-1], dtype=np.float32))
+
     @staticmethod
     @abstractmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
@@ -104,7 +108,7 @@ class Transform(ABC):
         samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
 
         b_A, b_Y = self.select(A, Y, samples)
-        Ts = self.estimate(b_A, b_Y, np.ones(b_Y.shape[:-1], dtype=np.float32))
+        Ts = self.estimate_sample(b_A, b_Y)
 
         distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
         losses = self._loss(distance_squared, weights, Ts)
@@ -162,6 +166,13 @@ class _LinearTransform(Transform):
         lhs = gram + self.reg * self._non_similarity_projector() + _CONDITIONING_RIDGE * np.eye(2 * n_params)
         rhs = (A_T_W @ Y).reshape(*A.shape[:-2], 2 * n_params, 1)
         return np.linalg.solve(lhs, rhs).reshape(*A.shape[:-2], n_params, 2).astype(np.float32)
+
+    def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
+        # Fit the sample without the similarity prior (only the conditioning ridge) rather than pre-softening it, so
+        # an extreme sample yields an extreme hypothesis for scoring to reject. This also decouples the output columns.
+        A_T = A.swapaxes(-2, -1)
+        lhs = A_T @ A + _CONDITIONING_RIDGE * np.eye(A.shape[-1], dtype=A.dtype)
+        return cast(f32Array, np.linalg.solve(lhs, A_T @ Y))
 
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
