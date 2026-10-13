@@ -85,8 +85,3 @@ def do_match(
     weights.flags.writeable = False
 
     return X, Y, weights
-
-
-def generate_warped_image(image: u8Array, template_shape: tuple[int, int], transform: Transform) -> u8Array:
-    image_max_size: int = max(image.shape[:2])
-    return transform.warp(image, template_shape, image_max_size)

@@ -21,7 +21,7 @@ transform = PerspectiveTransform()
 register.register_image(image, template, transform)
 
 # Apply the transformation
-registered = register.generate_warped_image(image, template.shape, transform)
+registered = transform.warp(image, template.shape)
 cv2.imwrite("registered.png", registered)
 
 # Other transform types:

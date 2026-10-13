@@ -6,7 +6,7 @@ import numpy as np
 from numpy.typing import NDArray
 from typer import Option, Typer
 
-from register import generate_warped_image, register_image
+from register import register_image
 from register.transforms import (
     AffineTransform,
     AnisotropicSimilarityTransform,
@@ -68,7 +68,7 @@ def main(
     print("matrix:")
     print(transform.matrix)
 
-    registered_image = generate_warped_image(cast(u8Array, image), template.shape, transform)
+    registered_image = transform.warp(cast(u8Array, image), template.shape)
     cv2.imwrite(out_path, registered_image)
 
     if blend_path is not None:

@@ -55,8 +55,8 @@ class Transform(ABC):
         ...
 
     @abstractmethod
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
-        """Warp image using fitted transform."""
+    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
+        """Warp `image` into the frame of a template with shape `template_shape` using the fitted transform."""
         ...
 
     def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
@@ -163,13 +163,16 @@ class AffineTransform(Transform):
         res[..., 1, 1] -= 1
         return (res**2).sum(axis=(-2, -1))
 
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         T = self.matrix.copy()
+        image_max_size = max(image.shape[:2])
         template_max_size = max(template_shape)
         T[0] *= image_max_size
         T[1:] *= image_max_size / template_max_size
         M = np.roll(T, -1, axis=0).T
-        return cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
+        return cast(
+            u8Array, cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)
+        )
 
 
 @dataclass
@@ -317,22 +320,17 @@ class BernsteinTransform(Transform):
     def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         if self.degrees == 2:
             from .utils import generate_bernstein2_remap_maps
 
-            map1, map2 = generate_bernstein2_remap_maps(*template_shape, self.matrix)
+            maps = generate_bernstein2_remap_maps(*template_shape, self.matrix)
         else:
             from .utils import generate_bernstein_remap_maps
 
-            map1, map2 = generate_bernstein_remap_maps(*template_shape, self.degrees, self.matrix)
+            maps = generate_bernstein_remap_maps(*template_shape, self.degrees, self.matrix)
 
-        return cv2.remap(  # type: ignore[return-value]
-            image,
-            (map1 * image_max_size).astype(np.float32),
-            (map2 * image_max_size).astype(np.float32),
-            interpolation=cv2.INTER_AREA,
-        )
+        return _remap(image, maps)
 
 
 @dataclass
@@ -375,13 +373,17 @@ class PerspectiveTransform(Transform):
         res[..., 2, 2] -= 1
         return (res**2).sum(axis=(-2, -1))
 
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         T = self.matrix.copy()
+        image_max_size = max(image.shape[:2])
         template_max_size = max(template_shape)
         T[:2, :2] *= image_max_size / template_max_size
         T[2, :2] *= image_max_size
         T[:2, 2] /= template_max_size
-        return cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP)  # type: ignore[return-value]
+        return cast(
+            u8Array,
+            cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_AREA | cv2.WARP_INVERSE_MAP),
+        )
 
 
 @dataclass
@@ -464,10 +466,13 @@ class ThinPlateSplineTransform(Transform):
         K = pairwise_distance_squared * np.log(pairwise_distance_squared.clip(min=1e-6))
         return np.einsum("...id,...ij,...jd->...", W, K, W)
 
-    def warp(self, image: u8Array, template_shape: tuple[int, int], image_max_size: int) -> u8Array:
+    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         from .utils import generate_tps_remap_maps
 
-        map1, map2 = generate_tps_remap_maps(*template_shape, self.matrix)
-        map1 = (map1 * image_max_size).astype(np.float32)
-        map2 = (map2 * image_max_size).astype(np.float32)
-        return cv2.remap(image, map1, map2, interpolation=cv2.INTER_AREA)  # type: ignore[return-value]
+        return _remap(image, generate_tps_remap_maps(*template_shape, self.matrix))
+
+
+def _remap(image: u8Array, maps: f32Array) -> u8Array:
+    """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
+    maps = maps * np.float32(max(image.shape[:2]))
+    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_AREA))

@@ -35,6 +35,6 @@ def test_register_against_self_should_produce_identity_transformation() -> None:
 def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], transform: Transform) -> None:
     image1, template_image = images
     register.register_image(image1, template_image, transform)
-    registered_image: NDArray[np.uint8] = register.generate_warped_image(image1, template_image.shape, transform)
+    registered_image = transform.warp(image1, template_image.shape)
     method_name = type(transform).__name__.replace("Transform", "").lower()
     Image.fromarray(registered_image).save(f"registered_{method_name}.png")
