@@ -250,51 +250,21 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
         s_rd = np.sqrt(np.maximum(np.diagonal(MTM, axis1=-2, axis2=-1), 1e-8))
         s_dr = np.sqrt(np.maximum(np.diagonal(MMT, axis1=-2, axis2=-1), 1e-8))
 
-        M = np.empty_like(M_aff)
-
-        mask = scale_on_right
-        if np.any(mask):
-            Mi, si = M_aff[mask], s_rd[mask]
-            Di_inv = 1.0 / si[..., None, :] * np.eye(2, dtype=Mi.dtype)
-            Ri_est = Mi @ Di_inv
-            Ui, _, Vti = np.linalg.svd(Ri_est)
-            Ri = Ui @ Vti
-            det_i = np.linalg.det(Ri)
-            needs_flip = det_i < 0
-            if np.any(needs_flip):
-                Vti[needs_flip, -1, :] *= -1
-                Ri[needs_flip] = Ui[needs_flip] @ Vti[needs_flip]
-            M[mask] = Ri * si[..., None, :]
-
-        mask = ~scale_on_right
-        if np.any(mask):
-            Mi, si = M_aff[mask], s_dr[mask]
-            Di_inv = 1.0 / si[..., None, :] * np.eye(2, dtype=Mi.dtype)
-            Ri_est = Di_inv.swapaxes(-2, -1) @ Mi
-            Ui, _, Vti = np.linalg.svd(Ri_est)
-            Ri = Ui @ Vti
-            det_i = np.linalg.det(Ri)
-            needs_flip = det_i < 0
-            if np.any(needs_flip):
-                Vti[needs_flip, -1, :] *= -1
-                Ri[needs_flip] = Ui[needs_flip] @ Vti[needs_flip]
-            M[mask] = si[..., :, None] * Ri
-
-        return M
+        # M = R @ D: divide out the column scales; M = D @ R: divide out the row scales.
+        M_rd = _nearest_rotation(M_aff / s_rd[..., None, :]) * s_rd[..., None, :]
+        M_dr = s_dr[..., :, None] * _nearest_rotation(M_aff / s_dr[..., :, None])
+        return np.where(scale_on_right[..., None, None], M_rd, M_dr)
 
 
 def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-    H = src_centered.swapaxes(-2, -1) @ dst_centered
-    U, _, Vt = np.linalg.svd(H)
-    R_rot = Vt.swapaxes(-2, -1) @ U.swapaxes(-2, -1)
+    return _nearest_rotation(src_centered.swapaxes(-2, -1) @ dst_centered)
 
-    needs_inverting = np.linalg.det(R_rot) < 0
-    if np.any(needs_inverting):
-        Vt_copy = Vt.copy()
-        Vt_copy[needs_inverting, -1, :] *= -1
-        R_rot[needs_inverting] = Vt_copy[needs_inverting].swapaxes(-2, -1) @ U[needs_inverting].swapaxes(-2, -1)
 
-    return R_rot.swapaxes(-2, -1)
+def _nearest_rotation(M: NDArray[np.floating]) -> f32Array:
+    """Closest proper rotation (det = +1) to each matrix in M, in the Frobenius sense."""
+    U, _, Vt = np.linalg.svd(M)
+    U[..., :, -1] *= np.sign(np.linalg.det(U @ Vt))[..., None]
+    return U @ Vt
 
 
 @dataclass
