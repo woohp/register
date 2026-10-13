@@ -29,12 +29,13 @@ cv2.imwrite("registered.png", registered)
 #   AnisotropicSimilarityTransform, BernsteinTransform(degrees=2)
 ```
 
-Use as a CLI tool
+Use as a CLI tool (`pip install -e '.[cli]'`)
 
 ```bash
 register-image image.png template.png --out registered.png             # defaults to perspective
 register-image image.png template.png --method affine --out registered.png
 register-image image.png template.png --method bernstein -d 2 --out registered.png
+register-image image.png template.png --blend blend.png  # also write a red/blue/cyan ink overlay against the template
 ```
 
 Available methods: `perspective`, `affine`, `rigid`, `similarity`, `anisotropic_similarity`, `bernstein`, `thin_plate_spline`
