@@ -21,6 +21,13 @@ def test_register_against_self_should_produce_identity_transformation() -> None:
     np.testing.assert_array_almost_equal(transform.matrix, np.array([[0, 0], [1, 0], [0, 1]]), decimal=5)
 
 
+def test_register_featureless_image_raises() -> None:
+    template = np.asarray(Image.open("tests/assets/temp1.jpg").convert("L"))
+    blank = np.full_like(template, 128)
+    with pytest.raises(ValueError, match="Found 0 keypoints in the image"):
+        register.register_image(blank, template, AffineTransform())
+
+
 @pytest.mark.parametrize(
     "transform",
     [

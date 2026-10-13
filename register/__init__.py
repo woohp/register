@@ -20,11 +20,19 @@ def register_image(image1: u8Array, image2: u8Array, transform: Transform) -> Tr
 
     keypoints1, descriptors1 = detect_features(image1)
     keypoints2, descriptors2 = detect_features(image2)
+    _check_enough("keypoints in the image", len(keypoints1), transform)
+    _check_enough("keypoints in the template", len(keypoints2), transform)
 
     X, Y, weights = do_match(keypoints1, descriptors1, keypoints2, descriptors2)
+    _check_enough("matches", len(X), transform)
 
     transform.fit(Y, X, weights)
     return transform
+
+
+def _check_enough(what: str, count: int, transform: Transform) -> None:
+    if count < transform.min_samples:
+        raise ValueError(f"Found {count} {what}, but {type(transform).__name__} needs at least {transform.min_samples}")
 
 
 def resize_and_blur(image: u8Array) -> u8Array:
@@ -45,6 +53,8 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     keypoints: Sequence[cv2.KeyPoint] = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
     keypoints = keypoints[:2000]
     keypoints, descriptors = processor.compute(image, keypoints)
+    if not keypoints:  # descriptors is None rather than an empty array in this case
+        return np.empty((0, 2), dtype=np.float32), np.empty((0, 64), dtype=np.uint8)
     keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
     keypoints_array /= TARGET_MAX_SIZE
     return keypoints_array, cast(u8Array, descriptors)
