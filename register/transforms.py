@@ -148,15 +148,8 @@ class Transform(ABC):
 
 
 @dataclass
-class AffineTransform(Transform):
-    """6-DOF affine transform: translation, rotation, scale, shear."""
-
-    @property
-    def min_samples(self) -> int:
-        return 3
-
-    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
+class _LinearTransform(Transform):
+    """Internal base for transforms that are linear in their parameters (Y = A @ T), fitted by ridge regression."""
 
     def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
         A_T = A.swapaxes(-2, -1)
@@ -165,6 +158,18 @@ class AffineTransform(Transform):
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
         return A @ T
+
+
+@dataclass
+class AffineTransform(_LinearTransform):
+    """6-DOF affine transform: translation, rotation, scale, shear."""
+
+    @property
+    def min_samples(self) -> int:
+        return 3
+
+    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
+        return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
     def penalty(self, T: f32Array) -> f32Array:
         res = T[..., 1:, :].copy()
@@ -295,7 +300,7 @@ def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f3
 
 
 @dataclass
-class BernsteinTransform(Transform):
+class BernsteinTransform(_LinearTransform):
     """Transform using Bernstein polynomial basis. Numerically stable on [0,1]^2."""
 
     degrees: int = 2
@@ -317,14 +322,6 @@ class BernsteinTransform(Transform):
                 basis_list.append(bx * by)
 
         return np.concatenate(basis_list, axis=-1)
-
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
-
-    @staticmethod
-    def transform_points(A: f32Array, T: f32Array) -> f32Array:
-        return A @ T
 
     def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
