@@ -44,8 +44,11 @@ class Transform(ABC):
         ...
 
     @abstractmethod
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        """Estimate transform parameters from design matrix A and target points Y."""
+    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
+        """Estimate transform parameters from design matrix A and target points Y by weighted least squares.
+
+        `weights` has shape Y.shape[:-1] and scales each point's squared residual.
+        """
         ...
 
     @staticmethod
@@ -94,64 +97,48 @@ class Transform(ABC):
         samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
 
         b_A, b_Y = self.select(A, Y, samples)
-        Ts = self.estimate(b_A, b_Y)
+        Ts = self.estimate(b_A, b_Y, np.ones(b_Y.shape[:-1], dtype=np.float32))
 
-        Y_hat = self.transform_points(A, Ts)
-        distance_squared = get_distance_squared(Y_hat, Y)
-        objective_losses = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
-        weights_losses = self.penalty(Ts)
-        losses = objective_losses + self.reg * weights_losses
+        distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
+        losses = self._loss(distance_squared, weights, Ts)
 
         best_idx = np.argmin(losses)
         return Ts[best_idx], losses[best_idx].item()
 
-    def _irls(
-        self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, initial_loss: float
-    ) -> tuple[f32Array, float]:
-        last_T = T
-        last_loss = initial_loss
-
-        Y_hat = self.transform_points(A, T)
-        distance_squared = get_distance_squared(Y_hat, Y)
-        w = (weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2).astype(
-            np.float32
-        )
+    def _irls(self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, loss: float) -> tuple[f32Array, float]:
+        normalized_weights = weights / weights.sum()
+        distance_squared = get_distance_squared(self.transform_points(A, T), Y)
 
         for _ in range(self.n_iters_irls):
-            w_ext = np.ones((A.shape[0],) + w.shape[1:], dtype=w.dtype)
-            w_ext[: w.shape[0]] = w
-            w_reshaped = w_ext.reshape([-1] + [1] * (A.ndim - 1))
-            WA = A * w_reshaped
-            WY = np.pad(Y, [(0, A.shape[0] - Y.shape[0]), (0, 0)], constant_values=0) * w_reshaped
-            T = self.estimate(WA, WY)
+            # Weighting each squared residual by the derivative of the Geman-McClure loss gives a quadratic
+            # majorizer of the robust objective, so the weighted least-squares fit is the next iterate.
+            irls_weights = normalized_weights * self.sigma / (distance_squared + self.sigma) ** 2
+            new_T = self.estimate(A, Y, irls_weights)
+            new_distance_squared = get_distance_squared(self.transform_points(A, new_T), Y)
+            new_loss = self._loss(new_distance_squared, weights, new_T).item()
 
-            Y_hat = self.transform_points(A, T)
-            distance_squared = get_distance_squared(Y_hat, Y)
-            w = (
-                weights.astype(np.float64) * self.sigma / (distance_squared.astype(np.float64) + self.sigma) ** 2
-            ).astype(np.float32)
-            objective_loss = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
-            weights_loss = self.penalty(T)
-            loss: float = (objective_loss + weights_loss * self.reg).item()
+            if new_loss >= loss:
+                break
 
-            if loss >= last_loss:
-                return last_T, last_loss
-            elif last_loss - loss < 1e-6:
-                return T, loss
+            converged = loss - new_loss < 1e-6
+            T, loss, distance_squared = new_T, new_loss, new_distance_squared
+            if converged:
+                break
 
-            last_T = T
-            last_loss = loss
+        return T, loss
 
-        return T, last_loss
+    def _loss(self, distance_squared: f32Array, weights: f32Array, T: f32Array) -> NDArray[np.floating]:
+        objective = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
+        return objective + self.reg * self.penalty(T)
 
 
 @dataclass
 class _LinearTransform(Transform):
     """Internal base for transforms that are linear in their parameters (Y = A @ T), fitted by ridge regression."""
 
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        A_T = A.swapaxes(-2, -1)
-        return np.linalg.solve(A_T @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T @ Y)
+    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
+        A_T_W = A.swapaxes(-2, -1) * weights[..., None, :]
+        return cast(f32Array, np.linalg.solve(A_T_W @ A + self.reg * np.eye(A.shape[-1], dtype=A.dtype), A_T_W @ Y))
 
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
@@ -191,21 +178,23 @@ class AffineTransform(_LinearTransform):
 class _CenteredAffineTransform(AffineTransform):
     """Internal base for affine-like transforms estimated around source/destination centroids."""
 
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         src_xy = A[..., 1:]
-        dst_xy = Y
+        w = weights[..., None]
 
-        src_center = np.mean(src_xy, axis=-2, keepdims=True)
-        dst_center = np.mean(dst_xy, axis=-2, keepdims=True)
+        src_center = (w * src_xy).sum(axis=-2, keepdims=True) / w.sum(axis=-2, keepdims=True)
+        dst_center = (w * Y).sum(axis=-2, keepdims=True) / w.sum(axis=-2, keepdims=True)
 
-        M = self.estimate_centered(src_xy - src_center, dst_xy - dst_center)
+        # Scaling centered points by sqrt(w) turns every unweighted moment below into its weighted counterpart.
+        sqrt_w = np.sqrt(w)
+        M = self.estimate_centered(sqrt_w * (src_xy - src_center), sqrt_w * (Y - dst_center))
         t = dst_center - src_center @ M
 
         return np.concatenate([t, M], axis=-2)
 
     @abstractmethod
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        """Estimate the linear 2x2 component from centered source/destination points."""
+        """Estimate the linear 2x2 component from (sqrt-weighted) centered source/destination points."""
         ...
 
 
@@ -322,12 +311,12 @@ class PerspectiveTransform(Transform):
 
         return A
 
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
-        _, _, V = np.linalg.svd(A.reshape(A.shape[:-3] + (-1, 9)))
-        Ts = V[:, -1].reshape(-1, 3, 3)
-        Ts /= Ts[:, -1:, -1:]
-        Ts = Ts.swapaxes(1, 2)
-        return Ts
+    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
+        WA = A * np.sqrt(weights)[..., None, None]
+        _, _, Vh = np.linalg.svd(WA.reshape(*A.shape[:-3], -1, 9))
+        H = Vh[..., -1, :].reshape(*A.shape[:-3], 3, 3)
+        H /= H[..., -1:, -1:]
+        return H.swapaxes(-2, -1)
 
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
@@ -382,19 +371,14 @@ class ThinPlateSplineTransform(Transform):
         A_sampled = self.expand(X[samples], Y_sampled)
         return A_sampled, Y_sampled
 
-    def estimate(self, A: f32Array, Y: f32Array) -> f32Array:
+    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         N = Y.shape[-2]
-        if Y.shape[-2] != A.shape[-1]:
-            Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
-        else:
-            Y_aug = Y
+        Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
 
-        if self.reg > 0:
-            A_reg = A.copy()
-            A_reg[..., :N, :N] += self.reg * np.eye(N, dtype=A.dtype)
-            T = np.linalg.solve(A_reg, Y_aug)
-        else:
-            T = np.linalg.solve(A, Y_aug)
+        # Weighted smoothing spline: a point with weight w gets smoothing reg / w.
+        A_reg = A.copy()
+        A_reg[..., range(N), range(N)] += self.reg / weights
+        T = np.linalg.solve(A_reg, Y_aug)
 
         X = A[..., :-3, -2:]
         X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])

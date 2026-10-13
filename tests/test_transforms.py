@@ -7,6 +7,10 @@ from numpy.typing import NDArray
 import register.transforms
 
 
+def uniform_weights(Y: NDArray[np.float32]) -> NDArray[np.float32]:
+    return np.ones(Y.shape[:-1], dtype=np.float32)
+
+
 @pytest.mark.parametrize("batch_size", [None, 5])
 def test_estimate_rigid_transform(batch_size: int | None) -> None:
     T: NDArray[np.float32]
@@ -45,7 +49,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = rigid.estimate(A, Y)
+    estimated_T = rigid.estimate(A, Y, uniform_weights(Y))
     assert estimated_T.shape == expected_shape
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
@@ -54,7 +58,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
         T_scaled = T.copy()
         T_scaled[1:] *= 2
         Y_scaled = A @ T_scaled
-        estimated_T_scaled = rigid.estimate(A, Y_scaled)
+        estimated_T_scaled = rigid.estimate(A, Y_scaled, uniform_weights(Y_scaled))
         assert not np.allclose(estimated_T_scaled, T_scaled, atol=1e-5)
 
 
@@ -98,7 +102,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    estimated_T = similarity.estimate(A, Y)
+    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
     assert estimated_T.shape == expected_shape
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
     assert estimated_T.dtype == np.float32
@@ -122,7 +126,7 @@ def test_similarity_transform_uses_least_squares_uniform_scale_with_noise() -> N
     Y = Y_without_noise + noise
 
     similarity = register.transforms.SimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y)
+    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
 
     estimated_scale = np.sqrt(np.sum(estimated_T[1:] ** 2) / 2)
     assert estimated_scale == pytest.approx(scale, abs=1e-3)
@@ -146,7 +150,7 @@ def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
     Y = A @ T
 
     similarity = register.transforms.SimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y)
+    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
     estimated_M = estimated_T[1:]
     estimated_MTM = estimated_M.T @ estimated_M
 
@@ -173,7 +177,7 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     Y = A @ T
 
     similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y)
+    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
@@ -195,7 +199,7 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     Y = A @ T
 
     similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y)
+    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
@@ -207,7 +211,7 @@ def test_estimate_thin_plate_spline_transform() -> None:
 
     tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
     A = tps.expand(X, Y)
-    estimated_T = tps.estimate(A, Y)
+    estimated_T = tps.estimate(A, Y, uniform_weights(Y))
     Y_hat = tps.transform_points(A, estimated_T)
 
     np.testing.assert_array_almost_equal(Y_hat, Y, 4)
@@ -222,7 +226,7 @@ def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> N
         X = np.random.uniform(0, 1, (num_points, 2)).astype(np.float32)
         Y = X + np.random.normal(0, 0.01, (num_points, 2)).astype(np.float32)
         A = tps.expand(X, Y)
-        estimated_T = tps.estimate(A, Y)
+        estimated_T = tps.estimate(A, Y, uniform_weights(Y))
         Y_hat = tps.transform_points(A, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
     else:
@@ -232,7 +236,7 @@ def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> N
         )
         A_init = tps.expand(X, Y[0])
         A_batched = A_init[None].repeat(batch_size, axis=0)
-        estimated_T = tps.estimate(A_batched, Y)
+        estimated_T = tps.estimate(A_batched, Y, uniform_weights(Y))
         Y_hat = tps.transform_points(A_batched, estimated_T)
         np.testing.assert_array_almost_equal(Y_hat, Y, 4)
 
@@ -266,6 +270,53 @@ def test_estimate_quadratic_bernstein_transform() -> None:
     A = bernstein.expand(X, X)
     Y = (A @ T_true).astype(np.float32)
 
-    estimated_T = bernstein.estimate(A, Y)
+    estimated_T = bernstein.estimate(A, Y, uniform_weights(Y))
     assert estimated_T.shape == (9, 2)
     np.testing.assert_array_almost_equal(estimated_T, T_true, 5)
+
+
+@pytest.mark.parametrize(
+    "transform",
+    [
+        register.transforms.PerspectiveTransform(),
+        register.transforms.AffineTransform(),
+        register.transforms.RigidTransform(),
+        register.transforms.SimilarityTransform(),
+        register.transforms.AnisotropicSimilarityTransform(),
+        register.transforms.BernsteinTransform(degrees=2),
+    ],
+)
+def test_estimate_weight_acts_like_point_multiplicity(transform: register.transforms.Transform) -> None:
+    rng = np.random.default_rng(0)
+    X = rng.uniform(0, 1, (30, 2)).astype(np.float32)
+    Y = (X @ np.array([[0.9, 0.2], [-0.1, 1.1]]) + 0.1 + rng.normal(0, 0.05, X.shape)).astype(np.float32)
+    A = transform.expand(X, Y)
+
+    weights = np.ones(30, dtype=np.float32)
+    weights[:5] = 2
+    weights[-5:] = 0
+    multiplicity = weights.astype(np.int64)
+
+    weighted = transform.estimate(A, Y, weights)
+    duplicated_Y = Y.repeat(multiplicity, axis=0)
+    duplicated = transform.estimate(A.repeat(multiplicity, axis=0), duplicated_Y, uniform_weights(duplicated_Y))
+    np.testing.assert_allclose(weighted, duplicated, atol=1e-4)
+
+
+@pytest.mark.parametrize("batch_size", [None, 5])
+def test_estimate_perspective_transform(batch_size: int | None) -> None:
+    rng = np.random.default_rng(0)
+    batch_shape = () if batch_size is None else (batch_size,)
+    H = np.eye(3) + rng.normal(0, 0.1, (*batch_shape, 3, 3))
+    H /= H[..., -1:, -1:]
+    X = rng.uniform(0, 1, (*batch_shape, 20, 2)).astype(np.float32)
+    Y_homogeneous = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(0, 1)], constant_values=1) @ H.swapaxes(-2, -1)
+    Y = (Y_homogeneous[..., :2] / Y_homogeneous[..., 2:]).astype(np.float32)
+
+    perspective = register.transforms.PerspectiveTransform()
+    A = perspective.expand(X, Y)
+    estimated_T = perspective.estimate(A, Y, uniform_weights(Y))
+
+    assert estimated_T.shape == (*batch_shape, 3, 3)
+    np.testing.assert_allclose(estimated_T, H.swapaxes(-2, -1), atol=1e-3)
+    np.testing.assert_allclose(perspective.transform_points(A, estimated_T), Y, atol=1e-4)
