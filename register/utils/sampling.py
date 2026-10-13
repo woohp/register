@@ -17,7 +17,6 @@ def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray
         raise ValueError(f"Cannot sample {k} items from a population of {N}")
 
     n_combos = math.comb(N, k)
-    n_samples = min(n_combos, max_samples)
 
     if n_combos <= max_samples:
         # Caller asked for at least the full space, so return every combination.
@@ -25,13 +24,13 @@ def get_random_samples(N: int, k: int, max_samples: int, rng: Random) -> NDArray
 
     seen: set[tuple[int, ...]] = set()
 
-    for i in range(n_samples):
+    for i in range(max_samples):
         # Preserve the original prefix-growth behavior: at iteration i we only draw
         # from combinations of the first min(k + i, N) points.
         prefix_size = min(k + i, N)
 
         if prefix_size == N:
-            remaining_samples = n_samples - i
+            remaining_samples = max_samples - i
             remaining_combos = n_combos - len(seen)
             if (
                 n_combos <= DENSE_SUFFIX_MAX_COMBOS
