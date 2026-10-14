@@ -42,6 +42,8 @@ def _check_enough(what: str, count: int, transform: Transform) -> None:
 
 def resize_and_blur(image: u8Array) -> u8Array:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
+    # A 3x3 kernel truncates sigma=2 to weights of about (0.32, 0.36, 0.32), nearly a box blur: the kernel size, not
+    # sigma, sets the blur strength. Kept as is; changing it would shift detection results.
     return cast(u8Array, cv2.GaussianBlur(image, ksize=(3, 3), sigmaX=2.0, sigmaY=2.0))
 
 
