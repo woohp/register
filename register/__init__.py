@@ -93,12 +93,15 @@ def do_match(
     image_top2_distances = np.take_along_axis(distances, image_top2, 1)
     template_top2_distances = np.take_along_axis(distances, template_top2, 0)
 
-    keep_image = (image_top2_distances[:, 1] - image_top2_distances[:, 0]) >= IMAGE_MATCH_MARGIN
+    image_unambiguous = (image_top2_distances[:, 1] - image_top2_distances[:, 0]) >= IMAGE_MATCH_MARGIN
     template_unambiguous = (template_top2_distances[1, :] - template_top2_distances[0, :]) >= TEMPLATE_MATCH_MARGIN
 
-    keep_image[template_top2[0, ~template_unambiguous]] = False
+    # Keep mutual nearest neighbors only, so every template keypoint is matched at most once.
+    best_template = image_top2[:, 0]
+    mutual = template_top2[0, best_template] == np.arange(len(distances))
+    keep_image = image_unambiguous & mutual & template_unambiguous[best_template]
 
-    matched_template = image_top2[keep_image, 0]
+    matched_template = best_template[keep_image]
     weights = np.exp(
         distances[keep_image, matched_template].astype(np.float32) * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS)
     )

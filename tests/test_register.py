@@ -78,3 +78,24 @@ def test_register_rescaled_copy_maps_pixel_centers(scale: float) -> None:
 
     # cv2.resize aligns pixel centers: template pixel x lands on image pixel (x + 0.5) * scale - 0.5.
     np.testing.assert_allclose(image_points, (template_points + 0.5) * scale - 0.5, atol=0.15)
+
+
+def test_do_match_keeps_only_mutual_nearest_neighbors() -> None:
+    rng = np.random.default_rng(0)
+    template_descriptors = rng.integers(0, 256, (3, register.DESCRIPTOR_BITS // 8), dtype=np.uint8)
+    near_copy = template_descriptors[0].copy()
+    near_copy[:5] ^= 1  # 5 bits away from template descriptor 0
+    # Image keypoints 0 and 1 both have template keypoint 0 as their best match; only image keypoint 0 is mutual.
+    image_descriptors = np.stack([template_descriptors[0], near_copy, template_descriptors[1], template_descriptors[2]])
+    image_keypoints = np.arange(8, dtype=np.float32).reshape(4, 2)
+    template_keypoints = np.arange(6, dtype=np.float32).reshape(3, 2) + 100
+
+    image_points, template_points, _ = register.do_match(
+        image_keypoints, image_descriptors, template_keypoints, template_descriptors
+    )
+
+    matches = {(tuple(i), tuple(t)) for i, t in zip(image_points.tolist(), template_points.tolist())}
+    expected = {
+        (tuple(image_keypoints[i].tolist()), tuple(template_keypoints[t].tolist())) for i, t in [(0, 0), (2, 1), (3, 2)]
+    }
+    assert matches == expected

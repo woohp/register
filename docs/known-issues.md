@@ -22,13 +22,9 @@ The robust loss is measured on sparse feature matches. When the model cannot rep
 
 `PerspectiveTransform.estimate` is a weighted DLT: it minimizes the algebraic residual, which equals the projective depth times the geometric residual the loss measures. So unlike the linear transforms, its IRLS steps are not exact majorize-minimize steps; the early stop catches steps that raise the loss. The exact fix is a weighted Gauss-Newton/Levenberg-Marquardt step on the geometric residuals. The easy approximation, refitting with weights divided by depth², lowered the loss only marginally (0.27769 to 0.27740 on page1), worsened ink overlap (0.335 to 0.317; page2 0.307 to 0.288), and doubled IRLS time, so it was not adopted.
 
-## Matching is not mutual nearest neighbor
-
-`do_match` only drops image keypoints that are the best match of an ambiguous template descriptor, so several image keypoints can map to the same template keypoint (page1: 330 matches, 272 unique template points). Duplicates skew the loss and make the full TPS system near-singular. A mutual check is one line: keep row `i` only if the best row for its best column is `i`. `argpartition` with `kth=(1, 2)` also needs at least 3 keypoints per side.
-
 ## Thin-plate spline
 
-TPS produced an all-black image until the IRLS weighting fix; it now registers reasonably (Dice 0.33 on page1). Duplicate control points (see matching) remain, IRLS fits a spline through every match, and the warp costs O(H·W·N). The `wendland-transform` branch explored a compactly supported alternative.
+TPS produced an all-black image until the IRLS weighting fix; it now registers reasonably (Dice about 0.31 on both pages). Every match is a control point, so each IRLS step solves a dense (N+3)-square system, and the warp costs O(H·W·N). The `wendland-transform` branch explored a compactly supported alternative.
 
 ## No detection of failed registrations
 
