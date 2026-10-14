@@ -22,9 +22,9 @@ The robust loss is measured on sparse feature matches. When the model cannot rep
 
 `PerspectiveTransform.estimate` is a weighted DLT: it minimizes the algebraic residual, which equals the projective depth times the geometric residual the loss measures. So unlike the linear transforms, its IRLS steps are not exact majorize-minimize steps; the early stop catches steps that raise the loss. The exact fix is a weighted Gauss-Newton/Levenberg-Marquardt step on the geometric residuals. The easy approximation, refitting with weights divided by depth², lowered the loss only marginally (0.27769 to 0.27740 on page1), worsened ink overlap (0.335 to 0.317; page2 0.307 to 0.288), and doubled IRLS time, so it was not adopted.
 
-## Thin-plate spline
+## Local deformation (TPS was removed)
 
-TPS produced an all-black image until the IRLS weighting fix; it now registers reasonably (Dice about 0.31 on both pages). Every match is a control point, so each IRLS step solves a dense (N+3)-square system, and the warp costs O(H·W·N). The `wendland-transform` branch explored a compactly supported alternative.
+`ThinPlateSplineTransform` used every match as a control point, so fitting cost O(N³) and warping O(H·W·N); it nearly interpolated inlier noise, and it registered worse than Bernstein degree 3 on the test pages (0.31 vs 0.47). It was removed. If local deformation (e.g. a page curling near the spine) is needed, use a fixed grid of control points instead, which is linear in its parameters and slots into `_LinearTransform` (similarity penalty, consistent IRLS, cost independent of N): B-spline free-form deformation (`bsplines` branch; reproduces the identity like Bernstein) or fixed-center Wendland RBFs (`wendland-transform` branch). Either has too many parameters for RANSAC's minimal samples, so it should start from a perspective or Bernstein fit and refine with IRLS.
 
 ## Rejecting bad registrations is the caller's job
 
@@ -34,4 +34,4 @@ Gap: `register_image` returns the transform but drops the loss `fit` returns (si
 
 ## Warps do not anti-alias
 
-OpenCV's `warpAffine`, `warpPerspective` and `remap` sample bilinearly. When the image has more pixels per template pixel than one, pre-shrink it with `cv2.resize(..., interpolation=cv2.INTER_AREA)` before warping. One global factor is exact for affine-family models and approximate for perspective, Bernstein and TPS. The test pages are the same size, so this does not show up there.
+OpenCV's `warpAffine`, `warpPerspective` and `remap` sample bilinearly. When the image has more pixels per template pixel than one, pre-shrink it with `cv2.resize(..., interpolation=cv2.INTER_AREA)` before warping. One global factor is exact for affine-family models and approximate for perspective and Bernstein. The test pages are the same size, so this does not show up there.

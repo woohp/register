@@ -14,7 +14,6 @@ from register.transforms import (
     PerspectiveTransform,
     RigidTransform,
     SimilarityTransform,
-    ThinPlateSplineTransform,
     Transform,
 )
 
@@ -28,7 +27,6 @@ class Method(StrEnum):
     similarity = "similarity"
     anisotropic_similarity = "anisotropic_similarity"
     bernstein = "bernstein"
-    thin_plate_spline = "thin_plate_spline"
 
 
 TRANSFORMS: dict[Method, type[Transform]] = {
@@ -37,7 +35,6 @@ TRANSFORMS: dict[Method, type[Transform]] = {
     Method.rigid: RigidTransform,
     Method.similarity: SimilarityTransform,
     Method.anisotropic_similarity: AnisotropicSimilarityTransform,
-    Method.thin_plate_spline: ThinPlateSplineTransform,
 }
 
 app = Typer()

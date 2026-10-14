@@ -4,9 +4,8 @@ from typing import Any
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
 
-from register.utils import get_distance_squared, get_pairwise_distances_squared
+from register.utils import get_distance_squared
 from register.utils.sampling import get_random_samples
 
 
@@ -25,36 +24,6 @@ def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int)
 
     expected = np.sum((x - y) ** 2, axis=-1)
     np.testing.assert_allclose(get_distance_squared(x, y), expected, atol=1e-5)
-
-
-@pytest.mark.parametrize(
-    ("batch_size", "n", "m", "dim"),
-    [
-        (None, 5, 7, 4),
-        (3, 5, 7, 4),
-    ],
-)
-def test_get_pairwise_distances_squared(batch_size: int | None, n: int, m: int, dim: int) -> None:
-    rng = np.random.default_rng(0)
-    x_shape = (n, dim) if batch_size is None else (batch_size, n, dim)
-    y_shape = (m, dim) if batch_size is None else (batch_size, m, dim)
-
-    x = rng.normal(0, 1, x_shape).astype(np.float32)
-    y = rng.normal(0, 1, y_shape).astype(np.float32)
-
-    expected: NDArray[np.float32]
-    expected_shape: tuple[int, ...]
-
-    if batch_size is None:
-        expected = np.sum((x[:, None] - y[None]) ** 2, axis=-1)
-        expected_shape = (n, m)
-    else:
-        expected = np.sum((x[:, :, None] - y[:, None]) ** 2, axis=-1)
-        expected_shape = (batch_size, n, m)
-
-    output = get_pairwise_distances_squared(x, y)
-    assert output.shape == expected_shape
-    np.testing.assert_allclose(output, expected, atol=1e-5)
 
 
 def test_get_random_samples_rejects_too_many_items() -> None:

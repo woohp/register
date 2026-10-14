@@ -2,7 +2,7 @@
 
 This library provides tools for image registration through feature matching.
 It supports perspective, affine, rigid, similarity, anisotropic similarity,
-Bernstein polynomial, and thin-plate spline transformations.
+and Bernstein polynomial transformations.
 
 ## Usage
 
@@ -38,4 +38,4 @@ register-image image.png template.png --method bernstein -d 2 --out registered.p
 register-image image.png template.png --blend blend.png  # also write a red/blue/cyan ink overlay against the template
 ```
 
-Available methods: `perspective`, `affine`, `rigid`, `similarity`, `anisotropic_similarity`, `bernstein`, `thin_plate_spline`
+Available methods: `perspective`, `affine`, `rigid`, `similarity`, `anisotropic_similarity`, `bernstein`

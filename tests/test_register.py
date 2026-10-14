@@ -14,7 +14,6 @@ from register.transforms import (
     PerspectiveTransform,
     RigidTransform,
     SimilarityTransform,
-    ThinPlateSplineTransform,
     Transform,
 )
 
@@ -40,7 +39,6 @@ def test_register_featureless_image_raises() -> None:
         RigidTransform(),
         SimilarityTransform(),
         AnisotropicSimilarityTransform(),
-        ThinPlateSplineTransform(),
         BernsteinTransform(degrees=2),
     ],
 )

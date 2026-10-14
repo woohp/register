@@ -209,43 +209,6 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
-def test_estimate_thin_plate_spline_transform() -> None:
-    rng = np.random.default_rng(42)
-    num_points = 50
-    X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
-    Y = X + rng.normal(0, 0.01, (num_points, 2)).astype(np.float32)
-
-    tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
-    A = tps.expand(X, Y)
-    estimated_T = tps.estimate(A, Y, uniform_weights(Y))
-    Y_hat = tps.transform_points(A, estimated_T)
-
-    np.testing.assert_array_almost_equal(Y_hat, Y, 4)
-
-
-@pytest.mark.parametrize("batch_size", [None, 5])
-def test_estimate_thin_plate_spline_transform_batch(batch_size: int | None) -> None:
-    rng = np.random.default_rng(0)
-    num_points = 50
-    tps = register.transforms.ThinPlateSplineTransform(reg=0.0)
-
-    if batch_size is None:
-        X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
-        Y = X + rng.normal(0, 0.01, (num_points, 2)).astype(np.float32)
-        A = tps.expand(X, Y)
-        estimated_T = tps.estimate(A, Y, uniform_weights(Y))
-        Y_hat = tps.transform_points(A, estimated_T)
-        np.testing.assert_array_almost_equal(Y_hat, Y, 4)
-    else:
-        X = rng.uniform(0, 1, (num_points, 2)).astype(np.float32)
-        Y = X[None].repeat(batch_size, axis=0) + rng.normal(0, 0.01, (batch_size, num_points, 2)).astype(np.float32)
-        A_init = tps.expand(X, Y[0])
-        A_batched = A_init[None].repeat(batch_size, axis=0)
-        estimated_T = tps.estimate(A_batched, Y, uniform_weights(Y))
-        Y_hat = tps.transform_points(A_batched, estimated_T)
-        np.testing.assert_array_almost_equal(Y_hat, Y, 4)
-
-
 def test_bernstein_basis_partition_of_unity() -> None:
     rng = np.random.default_rng(42)
     X = rng.uniform(0, 1, (100, 2)).astype(np.float32)

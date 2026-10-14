@@ -11,15 +11,12 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .utils import (
-    generate_tps_remap_maps,
     get_distance_squared,
-    get_pairwise_distances_squared,
 )
 from .utils.sampling import get_random_samples
 
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
-i64Array = NDArray[np.int64]
 
 # Tiny ridge that keeps degenerate RANSAC samples (e.g. repeated points) solvable; it is not a prior.
 _CONDITIONING_RIDGE = 1e-6
@@ -78,10 +75,6 @@ class Transform(ABC):
         """Warp `image` into the frame of a template with shape `template_shape` using the fitted transform."""
         ...
 
-    def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
-        """Select subset of points for RANSAC sampling."""
-        return A[samples], Y[samples]
-
     @property
     def matrix(self) -> f32Array:
         """Fitted transform parameters. Raises if fit() not called."""
@@ -121,8 +114,7 @@ class Transform(ABC):
     def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
         samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
 
-        b_A, b_Y = self.select(A, Y, samples)
-        Ts = self.estimate_sample(b_A, b_Y)
+        Ts = self.estimate_sample(A[samples], Y[samples])
 
         distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
         losses = self._loss(distance_squared, weights, Ts)
@@ -418,76 +410,6 @@ class PerspectiveTransform(Transform):
             u8Array,
             cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP),
         )
-
-
-@dataclass
-class ThinPlateSplineTransform(Transform):
-    """Non-rigid transform using thin-plate spline radial basis function."""
-
-    @property
-    def min_samples(self) -> int:
-        return 5
-
-    def expand(self, X: f32Array, Y: f32Array) -> f32Array:
-        K = _tps_kernel(X, X)
-        P = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
-        zeros = np.zeros((*X.shape[:-2], 3, 3), dtype=X.dtype)
-
-        A_top = np.concatenate([K, P], axis=-1)
-        A_bottom = np.concatenate([P.swapaxes(-1, -2), zeros], axis=-1)
-        A = np.concatenate([A_top, A_bottom], axis=-2)
-
-        return A
-
-    def select(self, A: f32Array, Y: f32Array, samples: i64Array) -> tuple[f32Array, f32Array]:
-        """Re-expand design matrix for sampled control points."""
-        X = A[..., :-3, -2:]
-        Y_sampled = Y[samples]
-        A_sampled = self.expand(X[samples], Y_sampled)
-        return A_sampled, Y_sampled
-
-    def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
-        N = Y.shape[-2]
-        Y_aug = np.pad(Y, [(0, 0)] * (Y.ndim - 2) + [(0, 3), (0, 0)], constant_values=0)
-
-        # Weighted smoothing spline: a point with weight w gets smoothing reg / w.
-        A_reg = A.copy()
-        A_reg[..., range(N), range(N)] += self.reg / weights
-        T = np.linalg.solve(A_reg, Y_aug)
-
-        X = A[..., :-3, -2:]
-        X_padded = np.pad(X, [(0, 0)] * (X.ndim - 2) + [(0, 3), (0, 0)])
-        return np.concatenate([T, X_padded], axis=-1)
-
-    @staticmethod
-    def transform_points(A: f32Array, T: f32Array) -> f32Array:
-        X_new = A[..., :-3, -2:]
-        X_old = T[..., :-3, -2:]
-        W = T[..., :-3, :2]
-        ab = T[..., -3:, :2]
-
-        K = _tps_kernel(X_new, X_old)
-        P = np.pad(X_new, [(0, 0)] * (X_new.ndim - 1) + [(1, 0)], constant_values=1)
-        return K @ W + P @ ab
-
-    def penalty(self, T: f32Array) -> f32Array:
-        """Bending energy penalty: trace(W.T @ K @ W)."""
-        W = T[..., :-3, :2]
-        X = T[..., :-3, -2:]
-        K = _tps_kernel(X, X)
-        return np.einsum("...id,...ij,...jd->...", W, K, W)
-
-    def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        return _remap(image, generate_tps_remap_maps(*template_shape, self.matrix))
-
-
-def _tps_kernel(X1: f32Array, X2: f32Array) -> f32Array:
-    """TPS radial basis U = r² log r² between every point of X1 and every point of X2, broadcasting batch dims."""
-    batch_shape = np.broadcast_shapes(X1.shape[:-2], X2.shape[:-2])
-    X1 = np.broadcast_to(X1, batch_shape + X1.shape[-2:])
-    X2 = np.broadcast_to(X2, batch_shape + X2.shape[-2:])
-    distance_squared = get_pairwise_distances_squared(X1, X2)
-    return distance_squared * np.log(distance_squared.clip(min=1e-6))
 
 
 def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
