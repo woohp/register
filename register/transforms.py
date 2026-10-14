@@ -299,31 +299,75 @@ class SimilarityTransform(_CenteredAffineTransform):
 
 @dataclass
 class AnisotropicSimilarityTransform(_CenteredAffineTransform):
-    """5-DOF transform: translation, rotation, and independent x/y scale."""
+    """5-DOF transform: translation, rotation, and independent scales along the template's or the image's axes."""
 
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        # Approximates the constrained least-squares fit by projecting the affine fit onto rotation and axis scales,
-        # in whichever order (scale then rotate, or rotate then scale) it is closer to. See docs/known-issues.md.
-        SXX = src_centered.swapaxes(-2, -1) @ src_centered
-        SXY = src_centered.swapaxes(-2, -1) @ dst_centered
-        Id = np.eye(2, dtype=src_centered.dtype)
-        M_aff = np.linalg.solve(SXX + _CONDITIONING_RIDGE * Id, SXY)
+        # Exact least squares for both orders: scales along the template's axes then rotation (M = D R), or rotation
+        # then scales along the image's axes (M = R D). With row vectors the residual |x M - y|^2 summed over points is
+        # tr(M^T S M) - 2 tr(M^T B) + const. Both solvers allow a negative scale; a mirrored candidate is chosen only
+        # when the other one is mirrored too, and `fit` then reports an infinite loss.
+        src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
+        S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
+        B = src.swapaxes(-2, -1) @ dst
+        candidates = np.stack([_scale_then_rotate(S, B), _rotate_then_scale(S, B)])
+        errors = np.einsum("...ji,...jk,...ki->...", candidates, S, candidates) - 2 * np.einsum(
+            "...ji,...ji->...", candidates, B
+        )
+        errors = np.where(np.linalg.det(candidates) > 0, errors, np.inf)
+        use_first = (errors[0] <= errors[1])[..., None, None]
+        return np.where(use_first, candidates[0], candidates[1]).astype(np.float32)
 
-        MTM = M_aff.swapaxes(-2, -1) @ M_aff
-        MMT = M_aff @ M_aff.swapaxes(-2, -1)
 
-        off_diag_mtm = np.abs(MTM[..., 0, 1])
-        off_diag_mmt = np.abs(MMT[..., 0, 1])
+def _scale_then_rotate(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Least-squares M = D R (orthogonal rows), in closed form.
 
-        scale_on_right = off_diag_mtm <= off_diag_mmt
+    Rotations preserve length, so |x D R - y| = |x D - y R^T|. For a fixed R each scale is a 1-D least-squares fit,
+    which leaves a quadratic form in (cos, sin) to maximize: the top eigenvector of a 2x2 matrix.
+    """
+    variances = np.diagonal(S, axis1=-2, axis2=-1)
+    # Row i holds the (cos, sin) coefficients of axis i's covariance with y R^T.
+    rows = np.stack([B[..., 0, :], np.stack([B[..., 1, 1], -B[..., 1, 0]], axis=-1)], axis=-2)
+    Q = rows.swapaxes(-2, -1) @ (rows / variances[..., None])
+    cos_sin = np.linalg.eigh(Q)[1][..., :, -1]
+    c, s = cos_sin[..., 0], cos_sin[..., 1]
+    R = np.stack([np.stack([c, s], axis=-1), np.stack([-s, c], axis=-1)], axis=-2)
+    scales = (rows @ cos_sin[..., None]) / variances[..., None]
+    return scales * R
 
-        s_rd = np.sqrt(np.maximum(np.diagonal(MTM, axis1=-2, axis2=-1), 1e-8))
-        s_dr = np.sqrt(np.maximum(np.diagonal(MMT, axis1=-2, axis2=-1), 1e-8))
 
-        # M = R @ D: divide out the column scales; M = D @ R: divide out the row scales.
-        M_rd = _nearest_rotation(M_aff / s_rd[..., None, :]) * s_rd[..., None, :]
-        M_dr = s_dr[..., :, None] * _nearest_rotation(M_aff / s_dr[..., :, None])
-        return np.where(scale_on_right[..., None, None], M_rd, M_dr)
+def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Least-squares M = R D (orthogonal columns m1, m2), by bisection on a Lagrange multiplier.
+
+    With multiplier mu for m1 . m2 = 0, stationarity reads (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2 for
+    p = m1 + m2 and q = m1 - m2, and the constraint becomes |p| = |q|. For |mu| <= the smallest eigenvalue of S the
+    Lagrangian is convex, so a root of |p|^2 - |q|^2 there is the global optimum, and on that interval it decreases.
+    """
+    eigenvalues, U = np.linalg.eigh(S)
+
+    def solve(rhs: NDArray[np.float64], shift: NDArray[np.float64]) -> NDArray[np.float64]:
+        # (S + shift I)^-1 rhs in S's eigenbasis. A singular component is left at 0 and set from the constraint below.
+        diagonal = eigenvalues + shift[..., None]
+        return np.divide(rhs, diagonal, out=np.zeros_like(rhs), where=diagonal != 0)
+
+    a = (U.swapaxes(-2, -1) @ (B[..., :, 0] + B[..., :, 1])[..., None])[..., 0]
+    c = (U.swapaxes(-2, -1) @ (B[..., :, 0] - B[..., :, 1])[..., None])[..., 0]
+    lo, hi = -eigenvalues[..., 0], eigenvalues[..., 0]
+    for _ in range(64):  # float64 bisection reaches machine precision well within 64 halvings
+        mu = (lo + hi) / 2
+        positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
+        lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
+    mu = (lo + hi) / 2
+    p, q = solve(a, mu), solve(c, -mu)
+    # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly zero, and in the "hard case"
+    # (no right-hand side along that axis) the root sits at the end of the interval, where that component is free.
+    # Taking it from |p| = |q| gives the same value at an interior root and the right one in the hard case.
+    q0 = np.copysign(np.sqrt(np.maximum((p**2).sum(axis=-1) - q[..., 1] ** 2, 0)), c[..., 0])
+    p0 = np.copysign(np.sqrt(np.maximum((q**2).sum(axis=-1) - p[..., 1] ** 2, 0)), a[..., 0])
+    upper = mu >= 0
+    q[..., 0] = np.where(upper, q0, q[..., 0])
+    p[..., 0] = np.where(upper, p[..., 0], p0)
+    p, q = (U @ p[..., None])[..., 0], (U @ q[..., None])[..., 0]
+    return np.stack([p + q, p - q], axis=-1) / 2
 
 
 def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:

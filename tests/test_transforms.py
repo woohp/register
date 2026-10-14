@@ -209,6 +209,47 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
+@pytest.mark.parametrize("scale_first", [True, False])
+def test_anisotropic_similarity_transform_finds_the_least_squares_fit(scale_first: bool) -> None:
+    # A thin, correlated cloud with noise, where projecting the affine fit onto rotation and scales falls short.
+    rng = np.random.default_rng(0)
+    X = (rng.standard_normal((50, 2)) @ [[1, 0.8], [0, 0.3]]).astype(np.float32)
+    c, s = math.cos(0.7), math.sin(0.7)
+    R, D = np.array([[c, s], [-s, c]]), np.diag([1.3, 0.6])
+    Y = (X @ (D @ R if scale_first else R @ D) + 0.1 * rng.standard_normal(X.shape)).astype(np.float32)
+
+    transform = register.transforms.AnisotropicSimilarityTransform()
+    A = transform.expand(X, Y)
+    T = transform.estimate(A, Y, uniform_weights(Y))
+    M = T[1:]
+    assert min(abs(M[0] @ M[1]), abs(M[:, 0] @ M[:, 1])) < 1e-5  # orthogonal rows (D R) or columns (R D)
+    error = ((A.astype(np.float64) @ T - Y) ** 2).sum()
+    assert error <= brute_force_anisotropic_error(X, Y) * (1 + 1e-5)
+
+
+def brute_force_anisotropic_error(X: NDArray[np.float32], Y: NDArray[np.float32]) -> float:
+    """Least squared error over rotation angles, for both D R and R D, with the best scales for each rotation."""
+    X_centered, Y_centered = X - X.mean(axis=0, dtype=np.float64), Y - Y.mean(axis=0, dtype=np.float64)
+    S, B = X_centered.T @ X_centered, X_centered.T @ Y_centered
+    angles = np.linspace(-np.pi, np.pi, 20_000, endpoint=False)
+    c, s = np.cos(angles), np.sin(angles)
+    R = np.stack([np.stack([c, s], axis=-1), np.stack([-s, c], axis=-1)], axis=-2)
+    # Each scale is a 1-D least-squares fit, removing (covariance with its target)^2 / (variance) from the error.
+    scale_first = (R * B).sum(axis=-1) ** 2 / np.diagonal(S)
+    rotate_first = (R * B).sum(axis=-2) ** 2 / np.einsum("gij,ik,gkj->gj", R, S, R)
+    explained = np.maximum(scale_first.sum(axis=-1), rotate_first.sum(axis=-1)).max()
+    return float((Y_centered**2).sum() - explained)
+
+
+def test_anisotropic_rotate_then_scale_solves_the_hard_case() -> None:
+    # B has no component along S's weakest axis that the multiplier could balance, so the optimum sits at the end of
+    # the multiplier's interval; stopping the bisection there would leave m1 . m2 = 1/9.
+    S, B = np.diag([1.0, 2.0]), np.array([[0.0, 0.0], [1.0, 1.0]])
+    M = register.transforms._rotate_then_scale(S, B)
+    assert M[:, 0] @ M[:, 1] == pytest.approx(0, abs=1e-12)
+    assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(-2 / 3)  # the brute-force optimum
+
+
 def test_bernstein_basis_partition_of_unity() -> None:
     rng = np.random.default_rng(42)
     X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
@@ -380,6 +421,7 @@ def beyond_horizon(X: NDArray[np.float32]) -> NDArray[np.float32]:
         (register.transforms.BernsteinTransform(degrees=2), lambda X: X @ similarity_then_shear(0.2)[0], True),
         (register.transforms.AffineTransform(), mirrored, False),
         (register.transforms.PerspectiveTransform(), mirrored, False),
+        (register.transforms.AnisotropicSimilarityTransform(), mirrored, False),
         (register.transforms.BernsteinTransform(degrees=2), folded, False),
         (register.transforms.PerspectiveTransform(), beyond_horizon, False),
     ],
