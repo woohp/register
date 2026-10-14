@@ -16,7 +16,9 @@ from register.utils.sampling import get_random_samples
         (3, 5, 4),
     ],
 )
-def test_get_distance_squared(batch_size: int | None, num_points: int, dim: int) -> None:
+def test_get_distance_squared(
+    batch_size: int | None, num_points: int, dim: int
+) -> None:
     rng = np.random.default_rng(0)
     shape = (num_points, dim) if batch_size is None else (batch_size, num_points, dim)
     x = rng.normal(0, 1, shape).astype(np.float32)
@@ -66,7 +68,9 @@ class CountingRandom(Random):
         self.sample_calls = 0
         self.shuffle_calls = 0
 
-    def sample[T](self, population: Sequence[T], k: int, *, counts: Iterable[int] | None = None) -> list[T]:
+    def sample[T](
+        self, population: Sequence[T], k: int, *, counts: Iterable[int] | None = None
+    ) -> list[T]:
         self.sample_calls += 1
         return super().sample(population, k, counts=counts)
 
@@ -75,7 +79,7 @@ class CountingRandom(Random):
         super().shuffle(x)
 
 
-def test_get_random_samples_keeps_unique_sorted_ordered_subsets_for_large_spaces() -> None:
+def test_get_random_samples_keeps_unique_sorted_subsets_for_large_spaces() -> None:
     rng = CountingRandom(1234)
     output = get_random_samples(5_000, 6, 4_333, rng)
     output_tuples = [tuple(row) for row in output.tolist()]
@@ -86,7 +90,7 @@ def test_get_random_samples_keeps_unique_sorted_ordered_subsets_for_large_spaces
     assert all(0 <= value < 5_000 for row in output_tuples for value in row)
 
 
-def test_get_random_samples_switches_to_materialized_suffix_when_prefix_saturates() -> None:
+def test_get_random_samples_materializes_suffix_when_prefix_saturates() -> None:
     rng = CountingRandom(1234)
     output = get_random_samples(30, 3, 4_000, rng)
     output_tuples = [tuple(row) for row in output.tolist()]

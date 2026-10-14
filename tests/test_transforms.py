@@ -119,13 +119,17 @@ def test_similarity_transform_uses_least_squares_uniform_scale_with_noise() -> N
     theta = 0.7
     scale = 2.0
     c, s = math.cos(theta), math.sin(theta)
-    T = np.array([[1.0, -2.0], [c * scale, s * scale], [-s * scale, c * scale]], dtype=np.float32)
+    T = np.array(
+        [[1.0, -2.0], [c * scale, s * scale], [-s * scale, c * scale]], dtype=np.float32
+    )
     Y_without_noise = A @ T
 
     noise = (rng.normal(size=Y_without_noise.shape) * 0.6).astype(np.float32)
     noise -= noise.mean(axis=0, keepdims=True)
     centered_signal = Y_without_noise - Y_without_noise.mean(axis=0, keepdims=True)
-    noise -= centered_signal * (np.sum(centered_signal * noise) / np.sum(centered_signal * centered_signal))
+    noise -= centered_signal * (
+        np.sum(centered_signal * noise) / np.sum(centered_signal * centered_signal)
+    )
     Y = Y_without_noise + noise
 
     similarity = register.transforms.SimilarityTransform(reg=0.0)
@@ -210,31 +214,44 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
 
 
 @pytest.mark.parametrize("scale_first", [True, False])
-def test_anisotropic_similarity_transform_finds_the_least_squares_fit(scale_first: bool) -> None:
-    # A thin, correlated cloud with noise, where projecting the affine fit onto rotation and scales falls short.
+def test_anisotropic_similarity_transform_finds_the_least_squares_fit(
+    scale_first: bool,
+) -> None:
+    # A thin, correlated cloud with noise, where projecting the affine fit onto rotation
+    # and scales falls short.
     rng = np.random.default_rng(0)
     X = (rng.standard_normal((50, 2)) @ [[1, 0.8], [0, 0.3]]).astype(np.float32)
     c, s = math.cos(0.7), math.sin(0.7)
     R, D = np.array([[c, s], [-s, c]]), np.diag([1.3, 0.6])
-    Y = (X @ (D @ R if scale_first else R @ D) + 0.1 * rng.standard_normal(X.shape)).astype(np.float32)
+    Y = (
+        X @ (D @ R if scale_first else R @ D) + 0.1 * rng.standard_normal(X.shape)
+    ).astype(np.float32)
 
     transform = register.transforms.AnisotropicSimilarityTransform()
     A = transform.expand(X, Y)
     T = transform.estimate(A, Y, uniform_weights(Y))
     M = T[1:]
-    assert min(abs(M[0] @ M[1]), abs(M[:, 0] @ M[:, 1])) < 1e-5  # orthogonal rows (D R) or columns (R D)
+    # Orthogonal rows (D R) or columns (R D).
+    assert min(abs(M[0] @ M[1]), abs(M[:, 0] @ M[:, 1])) < 1e-5
     error = ((A.astype(np.float64) @ T - Y) ** 2).sum()
     assert error <= brute_force_anisotropic_error(X, Y) * (1 + 1e-5)
 
 
-def brute_force_anisotropic_error(X: NDArray[np.float32], Y: NDArray[np.float32]) -> float:
-    """Least squared error over rotation angles, for both D R and R D, with the best scales for each rotation."""
-    X_centered, Y_centered = X - X.mean(axis=0, dtype=np.float64), Y - Y.mean(axis=0, dtype=np.float64)
+def brute_force_anisotropic_error(
+    X: NDArray[np.float32], Y: NDArray[np.float32]
+) -> float:
+    """Least squared error over rotation angles, for both D R and R D.
+
+    Each rotation gets its best scales.
+    """
+    X_centered = X - X.mean(axis=0, dtype=np.float64)
+    Y_centered = Y - Y.mean(axis=0, dtype=np.float64)
     S, B = X_centered.T @ X_centered, X_centered.T @ Y_centered
     angles = np.linspace(-np.pi, np.pi, 20_000, endpoint=False)
     c, s = np.cos(angles), np.sin(angles)
     R = np.stack([np.stack([c, s], axis=-1), np.stack([-s, c], axis=-1)], axis=-2)
-    # Each scale is a 1-D least-squares fit, removing (covariance with its target)^2 / (variance) from the error.
+    # Each scale is a 1-D least-squares fit,
+    # removing (covariance with its target)^2 / (variance) from the error.
     scale_first = (R * B).sum(axis=-1) ** 2 / np.diagonal(S)
     rotate_first = (R * B).sum(axis=-2) ** 2 / np.einsum("gij,ik,gkj->gj", R, S, R)
     explained = np.maximum(scale_first.sum(axis=-1), rotate_first.sum(axis=-1)).max()
@@ -244,11 +261,12 @@ def brute_force_anisotropic_error(X: NDArray[np.float32], Y: NDArray[np.float32]
 @pytest.mark.parametrize(
     ("S", "B", "optimum"),
     [
-        # B has no component along S's weakest axis that the multiplier could balance, so the optimum sits at the end
-        # of the multiplier's interval; stopping the bisection there would leave m1 . m2 = 1/9.
+        # B has no component along S's weakest axis that the multiplier could balance,
+        # so the optimum sits at the end of the multiplier's interval;
+        # stopping the bisection there would leave m1 . m2 = 1/9.
         (np.diag([1.0, 2.0]), np.array([[0.0, 0.0], [1.0, 1.0]]), -2 / 3),
-        # Nearly that, with nearly equal eigenvalues: the root is within rounding of the interval's end, where a
-        # rounded multiplier would leave m1 . m2 = -1e-4.
+        # Nearly that, with nearly equal eigenvalues: the root is within rounding of the
+        # interval's end, where a rounded multiplier would leave m1 . m2 = -1e-4.
         (np.diag([1.0, 1 + 1e-15]), np.array([[0.5, 0.5], [5e-16, -5e-16]]), -0.25),
     ],
 )
@@ -257,12 +275,13 @@ def test_anisotropic_rotate_then_scale_solves_the_hard_case(
 ) -> None:
     M = register.transforms._rotate_then_scale(S, B)
     assert M[:, 0] @ M[:, 1] == pytest.approx(0, abs=1e-12)
-    assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(optimum)  # the brute-force optimum
+    # The brute-force optimum.
+    assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(optimum)
 
 
-def test_anisotropic_similarity_transform_fits_mirrored_data_with_the_better_order() -> None:
-    # Both orders' optima are mirrored here, so neither is preferred for orientation; the better fit must still win
-    # (fit then reports an infinite loss).
+def test_anisotropic_similarity_transform_prefers_the_better_mirrored_fit() -> None:
+    # Both orders' optima are mirrored here, so neither is preferred for orientation;
+    # the better fit must still win (fit then reports an infinite loss).
     rng = np.random.default_rng(0)
     X = (rng.standard_normal((50, 2)) @ [[1, 0.8], [0, 0.3]]).astype(np.float32)
     c, s = math.cos(0.7), math.sin(0.7)
@@ -319,10 +338,14 @@ def test_estimate_quadratic_bernstein_transform() -> None:
         register.transforms.BernsteinTransform(degrees=2),
     ],
 )
-def test_estimate_weight_acts_like_point_multiplicity(transform: register.transforms.Transform) -> None:
+def test_estimate_weight_acts_like_point_multiplicity(
+    transform: register.transforms.Transform,
+) -> None:
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (30, 2)).astype(np.float32)
-    Y = (X @ np.array([[0.9, 0.2], [-0.1, 1.1]]) + 0.1 + rng.normal(0, 0.05, X.shape)).astype(np.float32)
+    Y = (
+        X @ np.array([[0.9, 0.2], [-0.1, 1.1]]) + 0.1 + rng.normal(0, 0.05, X.shape)
+    ).astype(np.float32)
     A = transform.expand(X, Y)
 
     weights = np.ones(30, dtype=np.float32)
@@ -332,7 +355,9 @@ def test_estimate_weight_acts_like_point_multiplicity(transform: register.transf
 
     weighted = transform.estimate(A, Y, weights)
     duplicated_Y = Y.repeat(multiplicity, axis=0)
-    duplicated = transform.estimate(A.repeat(multiplicity, axis=0), duplicated_Y, uniform_weights(duplicated_Y))
+    duplicated = transform.estimate(
+        A.repeat(multiplicity, axis=0), duplicated_Y, uniform_weights(duplicated_Y)
+    )
     np.testing.assert_allclose(weighted, duplicated, atol=1e-4)
 
 
@@ -343,7 +368,8 @@ def test_estimate_perspective_transform(batch_size: int | None) -> None:
     H = np.eye(3) + rng.normal(0, 0.1, (*batch_shape, 3, 3))
     H /= H[..., -1:, -1:]
     X = rng.uniform(0, 1, (*batch_shape, 20, 2)).astype(np.float32)
-    Y_homogeneous = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(0, 1)], constant_values=1) @ H.swapaxes(-2, -1)
+    X_homogeneous = np.pad(X, [(0, 0)] * (X.ndim - 1) + [(0, 1)], constant_values=1)
+    Y_homogeneous = X_homogeneous @ H.swapaxes(-2, -1)
     Y = (Y_homogeneous[..., :2] / Y_homogeneous[..., 2:]).astype(np.float32)
 
     perspective = register.transforms.PerspectiveTransform()
@@ -352,48 +378,77 @@ def test_estimate_perspective_transform(batch_size: int | None) -> None:
 
     assert estimated_T.shape == (*batch_shape, 3, 3)
     np.testing.assert_allclose(estimated_T, H.swapaxes(-2, -1), atol=1e-3)
-    np.testing.assert_allclose(perspective.transform_points(A, estimated_T), Y, atol=1e-4)
+    np.testing.assert_allclose(
+        perspective.transform_points(A, estimated_T), Y, atol=1e-4
+    )
 
 
-def similarity_then_shear(shear: float) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Row-vector linear part (x @ L) of a 1-radian rotation scaled by 0.7, followed by `shear`, plus a translation."""
+def similarity_then_shear(
+    shear: float,
+) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Row-vector linear part (x @ L) and translation of a sheared similarity.
+
+    The similarity is a 1-radian rotation scaled by 0.7, followed by `shear`.
+    """
     c, s = math.cos(1.0), math.sin(1.0)
     L = 0.7 * np.array([[c, s], [-s, c]]) @ np.array([[1, shear], [0, 1]])
     return L, np.array([0.3, -0.2])
 
 
-def bernstein_params(degrees: int, L: NDArray[np.float64], t: NDArray[np.float64]) -> NDArray[np.float32]:
+def bernstein_params(
+    degrees: int, L: NDArray[np.float64], t: NDArray[np.float64]
+) -> NDArray[np.float32]:
     steps = np.linspace(0, 1, degrees + 1)
     grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2)
     return (grid @ L + t).astype(np.float32)
 
 
-def perspective_params(L: NDArray[np.float64], t: NDArray[np.float64]) -> NDArray[np.float32]:
+def perspective_params(
+    L: NDArray[np.float64], t: NDArray[np.float64]
+) -> NDArray[np.float32]:
     return np.block([[L, np.zeros((2, 1))], [t, 1]]).astype(np.float32)
 
 
 @pytest.mark.parametrize(
     ("transform", "to_params"),
     [
-        (register.transforms.AffineTransform(), lambda L, t: np.vstack([t, L]).astype(np.float32)),
-        (register.transforms.BernsteinTransform(degrees=2), lambda L, t: bernstein_params(2, L, t)),
-        (register.transforms.BernsteinTransform(degrees=3), lambda L, t: bernstein_params(3, L, t)),
+        (
+            register.transforms.AffineTransform(),
+            lambda L, t: np.vstack([t, L]).astype(np.float32),
+        ),
+        (
+            register.transforms.BernsteinTransform(degrees=2),
+            lambda L, t: bernstein_params(2, L, t),
+        ),
+        (
+            register.transforms.BernsteinTransform(degrees=3),
+            lambda L, t: bernstein_params(3, L, t),
+        ),
         (register.transforms.PerspectiveTransform(), perspective_params),
     ],
 )
 def test_penalty_ignores_similarity_and_charges_shear(
     transform: register.transforms.Transform,
-    to_params: Callable[[NDArray[np.float64], NDArray[np.float64]], NDArray[np.float32]],
+    to_params: Callable[
+        [NDArray[np.float64], NDArray[np.float64]], NDArray[np.float32]
+    ],
 ) -> None:
-    assert transform.penalty(to_params(*similarity_then_shear(0.0))) == pytest.approx(0.0, abs=1e-6)
-    assert transform.penalty(to_params(*similarity_then_shear(0.3))) > 1e-2
+    similarity = to_params(*similarity_then_shear(0.0))
+    sheared = to_params(*similarity_then_shear(0.3))
+    assert transform.penalty(similarity) == pytest.approx(0.0, abs=1e-6)
+    assert transform.penalty(sheared) > 1e-2
 
 
 @pytest.mark.parametrize(
     "transform",
-    [register.transforms.AffineTransform(reg=1.0), register.transforms.BernsteinTransform(degrees=2, reg=1.0)],
+    [
+        register.transforms.AffineTransform(reg=1.0),
+        register.transforms.BernsteinTransform(degrees=2, reg=1.0),
+    ],
 )
-def test_strong_regularization_does_not_bias_similarity_fits(transform: register.transforms.Transform) -> None:
+def test_strong_regularization_does_not_bias_similarity_fits(
+    transform: register.transforms.Transform,
+) -> None:
     rng = np.random.default_rng(0)
     L, t = similarity_then_shear(0.0)
     X = rng.uniform(0, 1, (40, 2)).astype(np.float32)
@@ -421,7 +476,9 @@ def test_fit_respects_model_constraints(
 
     transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
     singular_values = np.linalg.svd(transform.matrix_[1:], compute_uv=False)
-    np.testing.assert_allclose(singular_values, expected_singular_values(singular_values), atol=1e-4)
+    np.testing.assert_allclose(
+        singular_values, expected_singular_values(singular_values), atol=1e-4
+    )
 
 
 def mirrored(X: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -440,9 +497,21 @@ def beyond_horizon(X: NDArray[np.float32]) -> NDArray[np.float32]:
 @pytest.mark.parametrize(
     ("transform", "warp", "valid"),
     [
-        (register.transforms.AffineTransform(), lambda X: X @ similarity_then_shear(0.2)[0], True),
-        (register.transforms.PerspectiveTransform(), lambda X: X @ similarity_then_shear(0.2)[0], True),
-        (register.transforms.BernsteinTransform(degrees=2), lambda X: X @ similarity_then_shear(0.2)[0], True),
+        (
+            register.transforms.AffineTransform(),
+            lambda X: X @ similarity_then_shear(0.2)[0],
+            True,
+        ),
+        (
+            register.transforms.PerspectiveTransform(),
+            lambda X: X @ similarity_then_shear(0.2)[0],
+            True,
+        ),
+        (
+            register.transforms.BernsteinTransform(degrees=2),
+            lambda X: X @ similarity_then_shear(0.2)[0],
+            True,
+        ),
         (register.transforms.AffineTransform(), mirrored, False),
         (register.transforms.PerspectiveTransform(), mirrored, False),
         (register.transforms.AnisotropicSimilarityTransform(), mirrored, False),
@@ -464,22 +533,27 @@ def test_fit_reports_infinite_loss_for_invalid_warps(
 
 
 def collinear(n: int) -> NDArray[np.float32]:
-    # Points on y = 0: every homography sample drawn from them has H[2, 2] = 0, so normalizing it gives NaNs.
+    # Points on y = 0: every homography sample drawn from them has H[2, 2] = 0,
+    # so normalizing it gives NaNs.
     return np.stack([np.arange(n), np.zeros(n)], axis=-1).astype(np.float32)
 
 
 def test_fit_skips_degenerate_hypotheses() -> None:
     rng = np.random.default_rng(0)
     X = np.concatenate([collinear(4), rng.uniform(0, 1, (16, 2)).astype(np.float32)])
-    weights = np.linspace(1, 0.5, len(X), dtype=np.float32)  # the collinear points form the first RANSAC sample
+    # The collinear points form the first RANSAC sample.
+    weights = np.linspace(1, 0.5, len(X), dtype=np.float32)
 
     transform = register.transforms.PerspectiveTransform().fit(X, X, weights)
     np.testing.assert_allclose(transform.matrix_, np.eye(3), atol=1e-4)
 
 
 def test_fit_reports_infinite_loss_when_every_hypothesis_is_degenerate() -> None:
-    X = collinear(4)  # the minimal sample size, so every hypothesis is fitted to the same degenerate points
-    transform = register.transforms.PerspectiveTransform().fit(X, X, np.ones(len(X), dtype=np.float32))
+    # The minimal sample size: every hypothesis is fitted to the same degenerate points.
+    X = collinear(4)
+    transform = register.transforms.PerspectiveTransform().fit(
+        X, X, np.ones(len(X), dtype=np.float32)
+    )
     assert transform.loss_ == math.inf
 
 
@@ -488,7 +562,11 @@ def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     X = rng.uniform(0, 1, (20, 2)).astype(np.float32)
     transform = register.transforms.AffineTransform()
     # RANSAC fits samples with estimate_sample; only IRLS steps go through estimate.
-    monkeypatch.setattr(transform, "estimate", lambda A, Y, weights: np.full((3, 2), np.nan, dtype=np.float32))
+    monkeypatch.setattr(
+        transform,
+        "estimate",
+        lambda A, Y, weights: np.full((3, 2), np.nan, dtype=np.float32),
+    )
 
     transform.fit(X, X, np.ones(len(X), dtype=np.float32))
     assert math.isfinite(transform.loss_)
@@ -496,9 +574,11 @@ def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_orientation_check_catches_a_horizon_at_the_bounding_box_edge() -> None:
-    # x' = -1 / (x - 1e-4), y' = y / (x - 1e-4): the horizon x = 1e-4 lies just inside the box [0, 1]^2, closer to its
-    # edge than a finite-difference step. Fitting this warp is hopeless in float32, so check the exact homography.
+    # x' = -1 / (x - 1e-4), y' = y / (x - 1e-4): the horizon x = 1e-4 lies just inside
+    # the box [0, 1]^2, closer to its edge than a finite-difference step.
+    # Fitting this warp is hopeless in float32, so check the exact homography.
     H = np.array([[0, 0, -1], [0, 1, 0], [1, 0, -1e-4]], dtype=np.float32)
     X = np.array([[0, 0], [1, 1]], dtype=np.float32)
-    assert not register.transforms.PerspectiveTransform()._preserves_orientation(X, H.T)
-    assert register.transforms.PerspectiveTransform()._preserves_orientation(X + 0.5, H.T)
+    perspective = register.transforms.PerspectiveTransform()
+    assert not perspective._preserves_orientation(X, H.T)
+    assert perspective._preserves_orientation(X + 0.5, H.T)

@@ -19,21 +19,31 @@ nb_f32array = partial(types.Array, types.float32)
 
 @numba_njit(
     [
-        nb_f32array(1, "C")(nb_f32array(2, "C", readonly=True), nb_f32array(2, "C", readonly=True)),
-        nb_f32array(2, "C")(nb_f32array(3, "C", readonly=True), nb_f32array(3, "C", readonly=True)),
-        nb_f32array(2, "C")(nb_f32array(3, "C", readonly=True), nb_f32array(2, "C", readonly=True)),
+        nb_f32array(1, "C")(
+            nb_f32array(2, "C", readonly=True), nb_f32array(2, "C", readonly=True)
+        ),
+        nb_f32array(2, "C")(
+            nb_f32array(3, "C", readonly=True), nb_f32array(3, "C", readonly=True)
+        ),
+        nb_f32array(2, "C")(
+            nb_f32array(3, "C", readonly=True), nb_f32array(2, "C", readonly=True)
+        ),
     ],
     cache=True,
     fastmath=True,
     boundscheck=False,
     parallel=True,
 )
-def get_distance_squared(x: NDArray[np.float32], y: NDArray[np.float32]) -> NDArray[np.float32]:
+def get_distance_squared(
+    x: NDArray[np.float32], y: NDArray[np.float32]
+) -> NDArray[np.float32]:
     """Compute element-wise squared L2 distance between corresponding row vectors.
 
     For 2-D inputs (N, D): returns (N,) with dist[i] = ||x[i] - y[i]||².
-    For 3-D + 2-D inputs (B, N, D) + (N, D): returns (B, N) with dist[i,j] = ||x[i,j] - y[j]||².
-    For 3-D + 3-D inputs (B, N, D) + (B, N, D): returns (B, N) with dist[i,j] = ||x[i,j] - y[i,j]||².
+    For 3-D + 2-D inputs (B, N, D) + (N, D): returns (B, N) with
+        dist[i,j] = ||x[i,j] - y[j]||².
+    For 3-D + 3-D inputs (B, N, D) + (B, N, D): returns (B, N) with
+        dist[i,j] = ||x[i,j] - y[i,j]||².
     """
     dim = x.shape[-1]
 
@@ -82,8 +92,16 @@ def popcount(x: int) -> int:
     return popcnt(x)  # type: ignore[call-arg]
 
 
-@numba_njit("u2[:, ::1](u8[:, ::1], u8[:, ::1])", fastmath=True, boundscheck=False, parallel=True, cache=True)
-def hamming_distance_matrix(X: NDArray[np.uint64], Y: NDArray[np.uint64]) -> NDArray[np.uint16]:
+@numba_njit(
+    "u2[:, ::1](u8[:, ::1], u8[:, ::1])",
+    fastmath=True,
+    boundscheck=False,
+    parallel=True,
+    cache=True,
+)
+def hamming_distance_matrix(
+    X: NDArray[np.uint64], Y: NDArray[np.uint64]
+) -> NDArray[np.uint16]:
     result = np.empty((X.shape[0], Y.shape[0]), dtype=np.uint16)
 
     for i in numba.prange(X.shape[0]):

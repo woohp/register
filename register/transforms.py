@@ -16,7 +16,8 @@ from .utils.sampling import get_random_samples
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
-# Tiny ridge that keeps degenerate RANSAC samples (e.g. repeated points) solvable; it is not a prior.
+# Tiny ridge that keeps degenerate RANSAC samples (e.g. repeated points) solvable;
+# it is not a prior.
 _CONDITIONING_RIDGE = 1e-6
 
 
@@ -24,11 +25,12 @@ _CONDITIONING_RIDGE = 1e-6
 class Transform(ABC):
     """Base class for geometric transforms with RANSAC + IRLS fitting.
 
-    `reg` weights `penalty`, which measures distortion beyond a similarity (shear, stretch, bending). Rotation,
-    uniform scale and translation are never penalized.
+    `reg` weights `penalty`, which measures distortion beyond a similarity (shear,
+    stretch, bending). Rotation, uniform scale and translation are never penalized.
 
-    Follows scikit-learn conventions: the constructor only stores settings, and `fit` returns self and sets the
-    learned attributes `matrix_` (transform parameters) and `loss_`, which do not exist before fitting.
+    Follows scikit-learn conventions: the constructor only stores settings,
+    and `fit` returns self and sets the learned attributes `matrix_` (transform
+    parameters) and `loss_`, which do not exist before fitting.
     """
 
     reg: float = 0.005
@@ -51,14 +53,18 @@ class Transform(ABC):
 
     @abstractmethod
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
-        """Estimate transform parameters from design matrix A and target points Y by weighted least squares.
+        """Estimate transform parameters by weighted least squares.
 
-        `weights` has shape Y.shape[:-1] and scales each point's squared residual.
+        A is the design matrix and Y the target points. `weights` has shape Y.shape[:-1]
+        and scales each point's squared residual.
         """
         ...
 
     def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
-        """Estimate RANSAC hypotheses from (batched) minimal samples. Their penalty is applied when scoring them."""
+        """Estimate RANSAC hypotheses from (batched) minimal samples.
+
+        Their penalty is applied when scoring them.
+        """
         return self.estimate(A, Y, np.ones(Y.shape[:-1], dtype=np.float32))
 
     @staticmethod
@@ -74,20 +80,22 @@ class Transform(ABC):
 
     @abstractmethod
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        """Warp `image` into the frame of a template with shape `template_shape` using the fitted transform."""
+        """Warp `image` into the frame of a template of shape `template_shape`."""
         ...
 
     def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> Self:
-        """Fit the transform from source points X to target points Y with per-point weights.
+        """Fit the transform from points X to Y with per-point weights.
 
-        Correspondences must be sorted by decreasing match quality: RANSAC draws its early hypotheses from a
-        growing prefix of the points (PROSAC-style), so unsorted input silently degrades the fit.
+        Correspondences must be sorted by decreasing match quality: RANSAC draws its
+        early hypotheses from a growing prefix of the points (PROSAC-style),
+        so unsorted input silently degrades the fit.
 
-        `loss_` is the robust loss plus penalty, for callers to threshold. It is inf when every RANSAC hypothesis is
-        degenerate, or when the fitted warp is not a valid page mapping over the bounding box of X: it folds, mirrors,
-        or (for perspective) places the horizon inside that box. The check is exact for affine-family and perspective
-        transforms; for Bernstein it samples a grid, so folds smaller than its spacing can slip through. `matrix_` is
-        set regardless.
+        `loss_` is the robust loss plus penalty, for callers to threshold.
+        It is inf when every RANSAC hypothesis is degenerate, or when the fitted warp is
+        not a valid page mapping over the bounding box of X: it folds, mirrors,
+        or (for perspective) places the horizon inside that box. The check is exact for
+        affine-family and perspective transforms; for Bernstein it samples a grid,
+        so folds smaller than its spacing can slip through. `matrix_` is set regardless.
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
@@ -100,13 +108,14 @@ class Transform(ABC):
         return self
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
-        """Whether the warp's Jacobian determinant is positive over the bounding box of X.
+        """Whether the warp's Jacobian determinant is positive over X's bounding box.
 
-        This generic version samples a grid with finite differences, so it can miss folds between grid points.
-        Models with an exact test override it.
+        This generic version samples a grid with finite differences,
+        so it can miss folds between grid points. Models with an exact test override it.
         """
         steps = np.linspace(0, 1, 16, dtype=np.float32)
-        grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2) * np.ptp(X, axis=0) + X.min(axis=0)
+        unit_grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2)
+        grid = unit_grid * np.ptp(X, axis=0) + X.min(axis=0)
         h = np.float32(1e-3)
         points = np.concatenate([grid, grid + [h, 0], grid + [0, h]]).astype(np.float32)
         mapped = self.transform_points(self.expand(points, points), T)
@@ -117,30 +126,41 @@ class Transform(ABC):
     def _geman_mcclure_loss(self, d: f32Array) -> f32Array:
         return (d / (d + self.sigma)).astype(np.float32)
 
-    def _ransac(self, A: f32Array, Y: f32Array, weights: f32Array) -> tuple[f32Array, float]:
-        samples = get_random_samples(Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321))
+    def _ransac(
+        self, A: f32Array, Y: f32Array, weights: f32Array
+    ) -> tuple[f32Array, float]:
+        samples = get_random_samples(
+            Y.shape[0], self.min_samples, self.n_iters_ransac, random.Random(4321)
+        )
 
         Ts = self.estimate_sample(A[samples], Y[samples])
 
         distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
         losses = self._loss(distance_squared, weights, Ts)
-        # Degenerate samples (e.g. collinear points for a homography) can give non-finite hypotheses, and argmin
-        # would pick a NaN.
+        # Degenerate samples (e.g. collinear points for a homography) can give
+        # non-finite hypotheses, and argmin would pick a NaN.
         losses = np.where(np.isfinite(losses), losses, np.inf)
 
         best_idx = np.argmin(losses)
         return Ts[best_idx], losses[best_idx].item()
 
-    def _irls(self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, loss: float) -> tuple[f32Array, float]:
+    def _irls(
+        self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, loss: float
+    ) -> tuple[f32Array, float]:
         normalized_weights = weights / weights.sum()
         distance_squared = get_distance_squared(self.transform_points(A, T), Y)
 
         for _ in range(self.n_iters_irls):
-            # Weighting each squared residual by the derivative of the Geman-McClure loss gives a quadratic
-            # majorizer of the robust objective, so the weighted least-squares fit is the next iterate.
-            irls_weights = normalized_weights * self.sigma / (distance_squared + self.sigma) ** 2
+            # Weighting each squared residual by the derivative of the Geman-McClure
+            # loss gives a quadratic majorizer of the robust objective,
+            # so the weighted least-squares fit is the next iterate.
+            irls_weights = (
+                normalized_weights * self.sigma / (distance_squared + self.sigma) ** 2
+            )
             new_T = self.estimate(A, Y, irls_weights)
-            new_distance_squared = get_distance_squared(self.transform_points(A, new_T), Y)
+            new_distance_squared = get_distance_squared(
+                self.transform_points(A, new_T), Y
+            )
             new_loss = self._loss(new_distance_squared, weights, new_T).item()
 
             if not new_loss < loss:  # also rejects a non-finite step
@@ -153,8 +173,12 @@ class Transform(ABC):
 
         return T, loss
 
-    def _loss(self, distance_squared: f32Array, weights: f32Array, T: f32Array) -> NDArray[np.floating]:
-        objective = np.average(self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights)
+    def _loss(
+        self, distance_squared: f32Array, weights: f32Array, T: f32Array
+    ) -> NDArray[np.floating]:
+        objective = np.average(
+            self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights
+        )
         return objective + self.reg * self.penalty(T)
 
 
@@ -162,29 +186,40 @@ class Transform(ABC):
 class _LinearTransform(Transform):
     """Internal base for transforms that are linear in their parameters (Y = A @ T).
 
-    The penalty is the squared distance of T from the subspace of similarity transforms. It is quadratic, so
-    `estimate` minimizes weighted squared error + reg * penalty in closed form, matching `_loss`.
+    The penalty is the squared distance of T from the subspace of similarity transforms.
+    It is quadratic, so `estimate` minimizes weighted squared error + reg * penalty in
+    closed form, matching `_loss`.
     """
 
     @abstractmethod
     def similarity_basis(self) -> f32Array:
-        """Parameters of the x/y translations, the identity, and the 90° rotation; shape (4, *T.shape)."""
+        """Parameters of the x/y translations, the identity, and the 90° rotation.
+
+        Shape (4, *T.shape).
+        """
         ...
 
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         n_params = A.shape[-1]
         A_T_W = A.swapaxes(-2, -1) * weights[..., None, :]
-        # Solve for vec(T) (row-major): squared error treats output columns separately, the penalty couples them.
-        gram = ((A_T_W @ A)[..., :, None, :, None] * np.eye(2, dtype=A.dtype)[:, None, :]).reshape(
-            *A.shape[:-2], 2 * n_params, 2 * n_params
+        # Solve for vec(T) (row-major): squared error treats output columns separately,
+        # the penalty couples them.
+        gram = (
+            (A_T_W @ A)[..., :, None, :, None] * np.eye(2, dtype=A.dtype)[:, None, :]
+        ).reshape(*A.shape[:-2], 2 * n_params, 2 * n_params)
+        lhs = (
+            gram
+            + self.reg * self._non_similarity_projector()
+            + _CONDITIONING_RIDGE * np.eye(2 * n_params)
         )
-        lhs = gram + self.reg * self._non_similarity_projector() + _CONDITIONING_RIDGE * np.eye(2 * n_params)
         rhs = (A_T_W @ Y).reshape(*A.shape[:-2], 2 * n_params, 1)
-        return np.linalg.solve(lhs, rhs).reshape(*A.shape[:-2], n_params, 2).astype(np.float32)
+        vec_T = np.linalg.solve(lhs, rhs)
+        return vec_T.reshape(*A.shape[:-2], n_params, 2).astype(np.float32)
 
     def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
-        # Fit the sample without the similarity prior (only the conditioning ridge) rather than pre-softening it, so
-        # an extreme sample yields an extreme hypothesis for scoring to reject. This also decouples the output columns.
+        # Fit the sample without the similarity prior (only the conditioning ridge)
+        # rather than pre-softening it, so an extreme sample yields an extreme
+        # hypothesis for scoring to reject. This also decouples the output columns.
         A_T = A.swapaxes(-2, -1)
         lhs = A_T @ A + _CONDITIONING_RIDGE * np.eye(A.shape[-1], dtype=A.dtype)
         return cast(f32Array, np.linalg.solve(lhs, A_T @ Y))
@@ -195,11 +230,14 @@ class _LinearTransform(Transform):
 
     def penalty(self, T: f32Array) -> f32Array:
         vec_T = T.reshape(*T.shape[:-2], -1)
-        return np.einsum("...i,ij,...j->...", vec_T, self._non_similarity_projector(), vec_T)
+        return np.einsum(
+            "...i,ij,...j->...", vec_T, self._non_similarity_projector(), vec_T
+        )
 
     def _non_similarity_projector(self) -> f32Array:
         basis = self.similarity_basis().reshape(4, -1).T.astype(np.float64)
-        return (np.eye(basis.shape[0]) - basis @ np.linalg.pinv(basis)).astype(np.float32)
+        projector = np.eye(basis.shape[0]) - basis @ np.linalg.pinv(basis)
+        return projector.astype(np.float32)
 
 
 @dataclass
@@ -214,7 +252,9 @@ class AffineTransform(_LinearTransform):
         return np.pad(X, [(0, 0)] * (X.ndim - 1) + [(1, 0)], constant_values=1)
 
     def similarity_basis(self) -> f32Array:
-        return _similarity_basis(identity=np.array([[0, 0], [1, 0], [0, 1]]), translation=np.array([1, 0, 0]))
+        return _similarity_basis(
+            identity=np.array([[0, 0], [1, 0], [0, 1]]), translation=np.array([1, 0, 0])
+        )
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
         return bool(np.linalg.det(T[1:]) > 0)
@@ -227,12 +267,23 @@ class AffineTransform(_LinearTransform):
         T[1:] *= image_max_size / template_max_size
         M = np.roll(T, -1, axis=0).T
         return cast(
-            u8Array, cv2.warpAffine(image, M, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP)
+            u8Array,
+            cv2.warpAffine(
+                image,
+                M,
+                dsize=template_shape[::-1],
+                flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+            ),
         )
 
 
-def _similarity_basis(identity: NDArray[np.floating], translation: NDArray[np.floating]) -> f32Array:
-    """Stack the x/y translations, `identity`, and `identity` rotated by 90° into a (4, K, 2) basis."""
+def _similarity_basis(
+    identity: NDArray[np.floating], translation: NDArray[np.floating]
+) -> f32Array:
+    """Stack the x/y translations, `identity`, and `identity` rotated by 90°.
+
+    Returns a (4, K, 2) basis.
+    """
     zeros = np.zeros_like(translation)
     x_shift = np.stack([translation, zeros], axis=-1)
     y_shift = np.stack([zeros, translation], axis=-1)
@@ -242,36 +293,43 @@ def _similarity_basis(identity: NDArray[np.floating], translation: NDArray[np.fl
 
 @dataclass
 class _CenteredAffineTransform(AffineTransform):
-    """Internal base for affine-like transforms estimated around source/destination centroids.
+    """Internal base for affine-like transforms estimated around centroids.
 
-    These models are constraints in themselves (rigid and similarity cannot shear, and stretch is the point of the
-    anisotropic model), so they carry no penalty.
+    These models are constraints in themselves (rigid and similarity cannot shear,
+    and stretch is the point of the anisotropic model), so they carry no penalty.
     """
 
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         src_xy = A[..., 1:]
         w = weights[..., None]
 
-        src_center = (w * src_xy).sum(axis=-2, keepdims=True) / w.sum(axis=-2, keepdims=True)
-        dst_center = (w * Y).sum(axis=-2, keepdims=True) / w.sum(axis=-2, keepdims=True)
+        w_sum = w.sum(axis=-2, keepdims=True)
+        src_center = (w * src_xy).sum(axis=-2, keepdims=True) / w_sum
+        dst_center = (w * Y).sum(axis=-2, keepdims=True) / w_sum
 
-        # Scaling centered points by sqrt(w) turns every unweighted moment below into its weighted counterpart.
+        # Scaling centered points by sqrt(w) turns every unweighted moment below into
+        # its weighted counterpart.
         sqrt_w = np.sqrt(w)
-        M = self.estimate_centered(sqrt_w * (src_xy - src_center), sqrt_w * (Y - dst_center))
+        M = self.estimate_centered(
+            sqrt_w * (src_xy - src_center), sqrt_w * (Y - dst_center)
+        )
         t = dst_center - src_center @ M
 
         return np.concatenate([t, M], axis=-2)
 
     @abstractmethod
-    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        """Estimate the linear 2x2 component from (sqrt-weighted) centered source/destination points."""
+    def estimate_centered(
+        self, src_centered: f32Array, dst_centered: f32Array
+    ) -> f32Array:
+        """Estimate the 2x2 linear part from (sqrt-weighted) centered points."""
         ...
 
     def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
     def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
-        # Undo AffineTransform's unconstrained sample fit: hypotheses must satisfy this model's constraints.
+        # Undo AffineTransform's unconstrained sample fit: hypotheses must satisfy this
+        # model's constraints.
         return self.estimate(A, Y, np.ones(Y.shape[:-1], dtype=np.float32))
 
 
@@ -279,7 +337,9 @@ class _CenteredAffineTransform(AffineTransform):
 class RigidTransform(_CenteredAffineTransform):
     """3-DOF rigid transform: translation and rotation only (no scale)."""
 
-    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+    def estimate_centered(
+        self, src_centered: f32Array, dst_centered: f32Array
+    ) -> f32Array:
         return _estimate_rigid_matrix(src_centered, dst_centered)
 
 
@@ -287,9 +347,13 @@ class RigidTransform(_CenteredAffineTransform):
 class SimilarityTransform(_CenteredAffineTransform):
     """4-DOF similarity transform: translation, rotation, uniform scale."""
 
-    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+    def estimate_centered(
+        self, src_centered: f32Array, dst_centered: f32Array
+    ) -> f32Array:
         R = _estimate_rigid_matrix(src_centered, dst_centered)
-        numerator = np.sum((src_centered @ R) * dst_centered, axis=(-2, -1), keepdims=True)
+        numerator = np.sum(
+            (src_centered @ R) * dst_centered, axis=(-2, -1), keepdims=True
+        )
         denominator = np.sum(src_centered**2, axis=(-2, -1), keepdims=True)
         scale = numerator / np.maximum(denominator, 1e-8)
         return cast(f32Array, scale * R)
@@ -300,7 +364,7 @@ def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f3
 
 
 def _nearest_rotation(M: NDArray[np.floating]) -> f32Array:
-    """Closest proper rotation (det = +1) to each matrix in M, in the Frobenius sense."""
+    """Closest proper rotation (det = +1) to each matrix in M (Frobenius norm)."""
     U, _, Vt = np.linalg.svd(M)
     U[..., :, -1] *= np.sign(np.linalg.det(U @ Vt))[..., None]
     return U @ Vt
@@ -308,15 +372,23 @@ def _nearest_rotation(M: NDArray[np.floating]) -> f32Array:
 
 @dataclass
 class AnisotropicSimilarityTransform(_CenteredAffineTransform):
-    """5-DOF transform: translation, rotation, and independent scales along the template's or the image's axes."""
+    """5-DOF transform: translation, rotation, and two independent axis scales.
 
-    def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-        # Exact least squares for both orders: scales along the template's axes then rotation (M = D R), or rotation
-        # then scales along the image's axes (M = R D). With row vectors the residual |x M - y|^2 summed over points is
-        # tr(M^T S M) - 2 tr(M^T B) + const (S includes the conditioning ridge). Both solvers allow a negative scale. An
-        # orientation-preserving candidate beats a mirrored one, then the better fit wins; a mirrored result makes `fit`
-        # report an infinite loss. So does an order whose optimum is mirrored, even if it has a proper local optimum:
-        # data that fits best mirrored is rejected rather than searched for its best proper fit.
+    The scales run along either the template's or the image's axes.
+    """
+
+    def estimate_centered(
+        self, src_centered: f32Array, dst_centered: f32Array
+    ) -> f32Array:
+        # Exact least squares for both orders: scales along the template's axes then
+        # rotation (M = D R), or rotation then scales along the image's axes (M = R D).
+        # With row vectors the residual |x M - y|^2 summed over points is
+        # tr(M^T S M) - 2 tr(M^T B) + const (S includes the conditioning ridge).
+        # Both solvers allow a negative scale. An orientation-preserving candidate beats
+        # a mirrored one, then the better fit wins; a mirrored result makes `fit` report
+        # an infinite loss. So does an order whose optimum is mirrored, even if it has a
+        # proper local optimum: data that fits best mirrored is rejected rather than
+        # searched for its best proper fit.
         src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
         S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
         B = src.swapaxes(-2, -1) @ dst
@@ -326,19 +398,26 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
         errors = quadratic - 2 * np.einsum("...ji,...ji->...", candidates, B)
         proper = np.linalg.det(candidates) > 0
 
-        use_first = (proper[0] > proper[1]) | ((proper[0] == proper[1]) & (errors[0] <= errors[1]))
-        return np.where(use_first[..., None, None], candidates[0], candidates[1]).astype(np.float32)
+        tie = proper[0] == proper[1]
+        use_first = (proper[0] > proper[1]) | (tie & (errors[0] <= errors[1]))
+        best = np.where(use_first[..., None, None], candidates[0], candidates[1])
+        return best.astype(np.float32)
 
 
-def _scale_then_rotate(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArray[np.float64]:
+def _scale_then_rotate(
+    S: NDArray[np.float64], B: NDArray[np.float64]
+) -> NDArray[np.float64]:
     """Least-squares M = D R (orthogonal rows), in closed form.
 
-    Rotations preserve length, so |x D R - y| = |x D - y R^T|. For a fixed R each scale is a 1-D least-squares fit,
-    which leaves a quadratic form in (cos, sin) to maximize: the top eigenvector of a 2x2 matrix.
+    Rotations preserve length, so |x D R - y| = |x D - y R^T|. For a fixed R each scale
+    is a 1-D least-squares fit, which leaves a quadratic form in (cos, sin) to maximize:
+    the top eigenvector of a 2x2 matrix.
     """
     variances = np.diagonal(S, axis1=-2, axis2=-1)
     # Row i holds the (cos, sin) coefficients of axis i's covariance with y R^T.
-    rows = np.stack([B[..., 0, :], np.stack([B[..., 1, 1], -B[..., 1, 0]], axis=-1)], axis=-2)
+    rows = np.stack(
+        [B[..., 0, :], np.stack([B[..., 1, 1], -B[..., 1, 0]], axis=-1)], axis=-2
+    )
     Q = rows.swapaxes(-2, -1) @ (rows / variances[..., None])
 
     cos_sin = np.linalg.eigh(Q)[1][..., :, -1]
@@ -348,17 +427,24 @@ def _scale_then_rotate(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
     return scales * R
 
 
-def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArray[np.float64]:
-    """Least-squares M = R D (orthogonal columns m1, m2), by bisection on a Lagrange multiplier.
+def _rotate_then_scale(
+    S: NDArray[np.float64], B: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    """Least-squares M = R D (orthogonal columns m1, m2), by bisection.
 
-    With multiplier mu for m1 . m2 = 0, stationarity reads (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2 for
-    p = m1 + m2 and q = m1 - m2, and the constraint becomes |p| = |q|. For |mu| <= the smallest eigenvalue of S the
-    Lagrangian is convex, so a root of |p|^2 - |q|^2 there is the global optimum, and on that interval it decreases.
+    With Lagrange multiplier mu for m1 . m2 = 0, stationarity reads
+    (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2 for p = m1 + m2 and q = m1 - m2,
+    and the constraint becomes |p| = |q|. For |mu| <= the smallest eigenvalue of S the
+    Lagrangian is convex, so a root of |p|^2 - |q|^2 there is the global optimum,
+    and on that interval it decreases.
     """
     eigenvalues, U = np.linalg.eigh(S)
 
-    def solve(rhs: NDArray[np.float64], shift: NDArray[np.float64]) -> NDArray[np.float64]:
-        # (S + shift I)^-1 rhs in S's eigenbasis. A singular component is left at 0 and set from the constraint below.
+    def solve(
+        rhs: NDArray[np.float64], shift: NDArray[np.float64]
+    ) -> NDArray[np.float64]:
+        # (S + shift I)^-1 rhs in S's eigenbasis. A singular component is left at 0 and
+        # set from the constraint below.
         diagonal = eigenvalues + shift[..., None]
         return np.divide(rhs, diagonal, out=np.zeros_like(rhs), where=diagonal != 0)
 
@@ -366,20 +452,27 @@ def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
     c = (U.swapaxes(-2, -1) @ (B[..., :, 0] - B[..., :, 1])[..., None])[..., 0]
 
     lo, hi = -eigenvalues[..., 0], eigenvalues[..., 0]
-    for _ in range(64):  # float64 bisection reaches machine precision well within 64 halvings
+    # float64 bisection reaches machine precision well within 64 halvings.
+    for _ in range(64):
         mu = (lo + hi) / 2
         positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
         lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
 
-    # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly zero, and in the "hard case"
-    # (no right-hand side along that axis) the root sits at the end of the interval, where that component is free.
-    # Taking it from |p| = |q| gives the same value at an interior root and the right one in the hard case. The bracket
-    # end with |p| > |q| (lo) or |q| >= |p| (hi) leaves that component a nonnegative square, so |p| = |q| holds exactly.
+    # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly
+    # zero, and in the "hard case" (no right-hand side along that axis) the root sits at
+    # the end of the interval, where that component is free. Taking it from |p| = |q|
+    # gives the same value at an interior root and the right one in the hard case.
+    # The bracket end with |p| > |q| (lo) or |q| >= |p| (hi) leaves that component a
+    # nonnegative square, so |p| = |q| holds exactly.
     upper = lo + hi >= 0
     mu = np.where(upper, lo, hi)
     p, q = solve(a, mu), solve(c, -mu)
-    q0 = np.copysign(np.sqrt(np.maximum((p**2).sum(axis=-1) - q[..., 1] ** 2, 0)), c[..., 0])
-    p0 = np.copysign(np.sqrt(np.maximum((q**2).sum(axis=-1) - p[..., 1] ** 2, 0)), a[..., 0])
+    q0 = np.copysign(
+        np.sqrt(np.maximum((p**2).sum(axis=-1) - q[..., 1] ** 2, 0)), c[..., 0]
+    )
+    p0 = np.copysign(
+        np.sqrt(np.maximum((q**2).sum(axis=-1) - p[..., 1] ** 2, 0)), a[..., 0]
+    )
     q[..., 0] = np.where(upper, q0, q[..., 0])
     p[..., 0] = np.where(upper, p[..., 0], p0)
 
@@ -403,7 +496,8 @@ class BernsteinTransform(_LinearTransform):
         return (By[..., :, None] * Bx[..., None, :]).reshape(*X.shape[:-1], -1)
 
     def similarity_basis(self) -> f32Array:
-        # Bernstein bases reproduce linear maps: the identity's control points are the uniform grid (i/d, j/d).
+        # Bernstein bases reproduce linear maps: the identity's control points are the
+        # uniform grid (i/d, j/d).
         steps = np.linspace(0, 1, self.degrees + 1)
         grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2)
         return _similarity_basis(identity=grid, translation=np.ones(len(grid)))
@@ -411,15 +505,21 @@ class BernsteinTransform(_LinearTransform):
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         height, width = template_shape
         template_max_size = np.float32(max(template_shape))
-        By = _bernstein_basis(np.arange(height, dtype=np.float32) / template_max_size, self.degrees)
-        Bx = _bernstein_basis(np.arange(width, dtype=np.float32) / template_max_size, self.degrees)
-        # The basis is a tensor product (rows of T ordered y-major), so each coordinate map is By @ T_c @ Bx.T.
-        T = self.matrix_.reshape(self.degrees + 1, self.degrees + 1, 2).transpose(2, 0, 1)
+        By = _bernstein_basis(
+            np.arange(height, dtype=np.float32) / template_max_size, self.degrees
+        )
+        Bx = _bernstein_basis(
+            np.arange(width, dtype=np.float32) / template_max_size, self.degrees
+        )
+        # The basis is a tensor product (rows of T ordered y-major), so each coordinate
+        # map is By @ T_c @ Bx.T.
+        n = self.degrees + 1
+        T = self.matrix_.reshape(n, n, 2).transpose(2, 0, 1)
         return _remap(image, By @ T @ Bx.T)
 
 
 def _bernstein_basis(t: f32Array, degrees: int) -> f32Array:
-    """Evaluate the `degrees + 1` Bernstein basis polynomials at t, along a new trailing axis."""
+    """Evaluate the `degrees + 1` Bernstein basis polynomials at t, on a new axis."""
     k = np.arange(degrees + 1)
     binomials = np.array([math.comb(degrees, i) for i in k], dtype=np.float32)
     t = t[..., None]
@@ -427,9 +527,11 @@ def _bernstein_basis(t: f32Array, degrees: int) -> f32Array:
 
 
 def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
-    """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
+    """Sample `image` at `maps`: (x, y) coordinates normalized by its longest side."""
     maps = maps * np.float32(max(image.shape[:2]))
-    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_LINEAR))
+    return cast(
+        u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_LINEAR)
+    )
 
 
 @dataclass
@@ -453,7 +555,8 @@ class PerspectiveTransform(Transform):
 
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         WA = (A * np.sqrt(weights)[..., None, None]).reshape(*A.shape[:-3], -1, 9)
-        # The reduced SVD skips the large unused U, but a 4-point sample's 8 rows only give its null vector in full.
+        # The reduced SVD skips the large unused U, but a 4-point sample's 8 rows only
+        # give its null vector in full.
         _, _, Vh = np.linalg.svd(WA, full_matrices=WA.shape[-2] < 9)
         H = Vh[..., -1, :].reshape(*A.shape[:-3], 3, 3)
         H /= H[..., -1:, -1:]
@@ -467,16 +570,22 @@ class PerspectiveTransform(Transform):
         return (Y_hat[..., :-1] / w).astype(np.float32)
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
-        # The Jacobian determinant is det(H) / w**3 for projective depth w, which is affine in the point. So it is
-        # positive over the bounding box exactly when w has the sign of det(H) at the box's corners.
+        # The Jacobian determinant is det(H) / w**3 for projective depth w,
+        # which is affine in the point. So it is positive over the bounding box exactly
+        # when w has the sign of det(H) at the box's corners.
         (x0, y0), (x1, y1) = X.min(axis=0), X.max(axis=0)
-        corners = np.array([[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]], dtype=np.float32)
+        corners = np.array(
+            [[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]], dtype=np.float32
+        )
         return bool(np.all(corners @ T[:, 2] * np.linalg.det(T) > 0))
 
     def penalty(self, T: f32Array) -> f32Array:
-        # T is H transposed (normalized so H[2, 2] = 1): T[:2, :2] is the linear part, T[:2, 2] the perspective terms.
+        # T is H transposed (normalized so H[2, 2] = 1): T[:2, :2] is the linear part,
+        # T[:2, 2] the perspective terms.
         M = T[..., :2, :2]
-        shear_and_stretch = ((M[..., 0, 0] - M[..., 1, 1]) ** 2 + (M[..., 0, 1] + M[..., 1, 0]) ** 2) / 2
+        shear_and_stretch = (
+            (M[..., 0, 0] - M[..., 1, 1]) ** 2 + (M[..., 0, 1] + M[..., 1, 0]) ** 2
+        ) / 2
         return cast(f32Array, shear_and_stretch + (T[..., :2, 2] ** 2).sum(axis=-1))
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
@@ -488,5 +597,10 @@ class PerspectiveTransform(Transform):
         T[:2, 2] /= template_max_size
         return cast(
             u8Array,
-            cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP),
+            cv2.warpPerspective(
+                image,
+                T.T,
+                dsize=template_shape[::-1],
+                flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP,
+            ),
         )

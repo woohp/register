@@ -11,8 +11,9 @@ from .utils import hamming_distance_matrix
 TARGET_MAX_SIZE = 1_200
 MAX_KEYPOINTS = 2_000  # strongest BRISK responses kept per image
 DESCRIPTOR_BITS = 512
-# Hamming-distance margins (in bits) by which a match must beat the runner-up: an image keypoint's best template
-# match must be clearly better than its second best, and a template keypoint's best image match must be unique.
+# Hamming-distance margins (in bits) by which a match must beat the runner-up:
+# an image keypoint's best template match must be clearly better than its second best,
+# and a template keypoint's best image match must be unique.
 IMAGE_MATCH_MARGIN = 10
 TEMPLATE_MATCH_MARGIN = 1
 # Match weights are exp(-MATCH_WEIGHT_DECAY * distance / DESCRIPTOR_BITS).
@@ -25,7 +26,8 @@ u8Array = NDArray[np.uint8]
 def register_image[T: Transform](image: u8Array, template: u8Array, transform: T) -> T:
     """Fit `transform` to map template coordinates to image coordinates and return it.
 
-    Read `transform.loss_` to reject bad registrations, and `transform.warp` to align the image to the template.
+    Read `transform.loss_` to reject bad registrations, and `transform.warp` to align
+    the image to the template.
     """
     image_keypoints, image_descriptors = detect_features(image)
     template_keypoints, template_descriptors = detect_features(template)
@@ -42,13 +44,17 @@ def register_image[T: Transform](image: u8Array, template: u8Array, transform: T
 
 def _check_enough(what: str, count: int, transform: Transform) -> None:
     if count < transform.min_samples:
-        raise ValueError(f"Found {count} {what}, but {type(transform).__name__} needs at least {transform.min_samples}")
+        raise ValueError(
+            f"Found {count} {what}, but {type(transform).__name__} needs at least "
+            f"{transform.min_samples}"
+        )
 
 
 def resize_and_blur(image: u8Array) -> u8Array:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
-    # A 3x3 kernel truncates sigma=2 to weights of about (0.32, 0.36, 0.32), nearly a box blur: the kernel size, not
-    # sigma, sets the blur strength. Kept as is; changing it would shift detection results.
+    # A 3x3 kernel truncates sigma=2 to weights of about (0.32, 0.36, 0.32),
+    # nearly a box blur: the kernel size, not sigma, sets the blur strength. Kept as is;
+    # changing it would shift detection results.
     return cast(u8Array, cv2.GaussianBlur(image, ksize=(3, 3), sigmaX=2.0, sigmaY=2.0))
 
 
@@ -59,7 +65,10 @@ def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
 
 
 def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
-    """Detect keypoints on a downscaled copy of `image`; coordinates are normalized by its longest side."""
+    """Detect keypoints on a downscaled copy of `image`.
+
+    Coordinates are normalized by the image's longest side.
+    """
     max_size = max(image.shape[:2])
     small_image = resize_and_blur(image)
 
@@ -73,10 +82,12 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     keypoints = keypoints[:MAX_KEYPOINTS]
     keypoints, descriptors = processor.compute(small_image, keypoints)
     if not keypoints:  # descriptors is None rather than an empty array in this case
-        return np.empty((0, 2), dtype=np.float32), np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
+        no_descriptors = np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
+        return np.empty((0, 2), dtype=np.float32), no_descriptors
 
     keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
-    # cv2.resize aligns pixel centers, so a small-image coordinate maps back as (x + 0.5) / ratio - 0.5.
+    # cv2.resize aligns pixel centers, so a small-image coordinate maps back as
+    # (x + 0.5) / ratio - 0.5.
     ratio = TARGET_MAX_SIZE / max_size
     keypoints_array = ((keypoints_array + 0.5) / ratio - 0.5) / max_size
     return keypoints_array, cast(u8Array, descriptors)
@@ -89,7 +100,9 @@ def do_match(
     template_descriptors: u8Array,
 ) -> tuple[f32Array, f32Array, f32Array]:
     # Rows are image keypoints, columns are template keypoints.
-    distances = hamming_distance_matrix(image_descriptors.view(np.uint64), template_descriptors.view(np.uint64))
+    distances = hamming_distance_matrix(
+        image_descriptors.view(np.uint64), template_descriptors.view(np.uint64)
+    )
 
     image_top2 = np.argpartition(distances, (1, 2), axis=1)[:, :2]
     template_top2 = np.argpartition(distances, (1, 2), axis=0)[:2, :]
@@ -97,17 +110,21 @@ def do_match(
     image_top2_distances = np.take_along_axis(distances, image_top2, 1)
     template_top2_distances = np.take_along_axis(distances, template_top2, 0)
 
-    image_unambiguous = (image_top2_distances[:, 1] - image_top2_distances[:, 0]) >= IMAGE_MATCH_MARGIN
-    template_unambiguous = (template_top2_distances[1, :] - template_top2_distances[0, :]) >= TEMPLATE_MATCH_MARGIN
+    image_gap = image_top2_distances[:, 1] - image_top2_distances[:, 0]
+    template_gap = template_top2_distances[1, :] - template_top2_distances[0, :]
+    image_unambiguous = image_gap >= IMAGE_MATCH_MARGIN
+    template_unambiguous = template_gap >= TEMPLATE_MATCH_MARGIN
 
-    # Keep mutual nearest neighbors only, so every template keypoint is matched at most once.
+    # Keep mutual nearest neighbors only, so every template keypoint is matched at
+    # most once.
     best_template = image_top2[:, 0]
     mutual = template_top2[0, best_template] == np.arange(len(distances))
     keep_image = image_unambiguous & mutual & template_unambiguous[best_template]
 
     matched_template = best_template[keep_image]
     weights = np.exp(
-        distances[keep_image, matched_template].astype(np.float32) * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS)
+        distances[keep_image, matched_template].astype(np.float32)
+        * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS)
     )
 
     image_points = image_keypoints[keep_image]
