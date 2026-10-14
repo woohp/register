@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-import register.transforms as transforms
+from register import transforms
 
 
 def uniform_weights(Y: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -533,8 +533,8 @@ def test_fit_reports_infinite_loss_for_invalid_warps(
 
 
 def collinear(n: int) -> NDArray[np.float32]:
-    # Points on y = 0 produce degenerate homography samples whose normalization
-    # can divide by zero.
+    # Points on y = 0 leave a homography sample underdetermined (a 4-D null space),
+    # and the SVD returns a null vector with H[2, 2] = 0, so normalizing it gives NaNs.
     return np.stack([np.arange(n), np.zeros(n)], axis=-1).astype(np.float32)
 
 

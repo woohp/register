@@ -55,7 +55,7 @@ def main(
         str | None,
         Option(
             "--blend",
-            help="Also write a red/blue/cyan ink overlay against the template.",
+            help="Also write a red/blue/cyan overlay of the result on the template.",
         ),
     ] = None,
 ) -> None:

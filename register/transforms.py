@@ -16,7 +16,8 @@ from .utils.sampling import get_random_samples
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
-# Tiny ridge to keep degenerate RANSAC samples (e.g. repeated points) solvable.
+# Tiny ridge for numerical conditioning that keeps degenerate RANSAC samples solvable
+# (e.g. repeated points). It is separate from the distortion penalty weighted by `reg`.
 _CONDITIONING_RIDGE = 1e-6
 
 
@@ -384,13 +385,13 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
     def estimate_centered(
         self, src_centered: f32Array, dst_centered: f32Array
     ) -> f32Array:
-        # Fit both scale orders: template-axis scales then rotation (M = D R), or
-        # rotation then image-axis scales (M = R D). With row vectors, the
-        # ridge-augmented objective is tr(M^T S M) - 2 tr(M^T B) + const.
-        # Prefer an orientation-preserving optimum, then the lower objective.
-        # If neither candidate preserves orientation, `fit` reports infinite loss.
-        # We do not search within an order for a proper alternative to its
-        # mirrored optimum.
+        # Solve both ridge-regularized least-squares problems exactly: scales along the
+        # template's axes then rotation (M = D R), or rotation then scales along the
+        # image's axes (M = R D). With row vectors the objective is
+        # tr(M^T S M) - 2 tr(M^T B) + const. Both solvers allow negative scales, so
+        # either candidate may be mirrored. Prefer an orientation-preserving candidate,
+        # then the lower objective; if both are mirrored, `fit` reports an infinite
+        # loss. Neither solver looks for a proper alternative to a mirrored optimum.
         src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
         S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
         B = src.swapaxes(-2, -1) @ dst
@@ -434,13 +435,11 @@ def _rotate_then_scale(
 ) -> NDArray[np.float64]:
     """Least-squares M = R D (orthogonal columns m1, m2), by bisection.
 
-    With multiplier mu for m1 . m2 = 0, define p = m1 + m2 and q = m1 - m2.
-    Stationarity gives (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2.
-    The constraint is |p| = |q|.
-
-    For |mu| <= the smallest eigenvalue of S, the Lagrangian is convex.
-    The residual |p|^2 - |q|^2 decreases with mu on this interval, so a zero
-    gives the global optimum.
+    With Lagrange multiplier mu for m1 . m2 = 0, define p = m1 + m2 and q = m1 - m2.
+    Stationarity gives (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2,
+    and the constraint becomes |p| = |q|. For |mu| <= the smallest eigenvalue of S the
+    Lagrangian is convex and the constraint gap |p|^2 - |q|^2 decreases in mu,
+    so its root there is the global optimum.
     """
     eigenvalues, U = np.linalg.eigh(S)
 
@@ -462,11 +461,12 @@ def _rotate_then_scale(
         positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
         lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
 
-    # Near a multiplier bound, the weakest-axis component of q (mu > 0)
-    # or p (mu < 0) is ill-conditioned. At the bound it can be undetermined
-    # (the hard case). Recover it from |p| = |q| instead of dividing.
-    # Use lo when growing q and hi when growing p; this leaves a nonnegative
-    # squared length for the missing component, even if the midpoint rounds badly.
+    # Along S's weakest axis, the solve for q (mu >= 0) or p (mu < 0) divides by nearly
+    # zero, and in the hard case (no right-hand side along that axis) that component is
+    # undetermined. Take it from |p| = |q| instead: at an interior root this gives the
+    # same value, and in the hard case the right one. Evaluate at the bracket end where
+    # the other vector is longer, lo (|p| > |q|) for q and hi (|q| >= |p|) for p,
+    # so the component's squared length stays nonnegative despite rounding in mu.
     upper = lo + hi >= 0
     mu = np.where(upper, lo, hi)
     p, q = solve(a, mu), solve(c, -mu)
