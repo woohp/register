@@ -4,7 +4,7 @@ import math
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Self, cast
 
 import cv2
 import numpy as np
@@ -28,13 +28,17 @@ class Transform(ABC):
 
     `reg` weights `penalty`, which measures distortion beyond a similarity (shear, stretch, bending). Rotation,
     uniform scale and translation are never penalized.
+
+    Follows scikit-learn conventions: the constructor only stores settings, and `fit` returns self and sets the
+    learned attributes `matrix_` (transform parameters) and `loss_`, which do not exist before fitting.
     """
 
     reg: float = 0.005
     sigma: float = 0.00003
     n_iters_ransac: int = 4_000
     n_iters_irls: int = 50
-    _matrix: f32Array | None = field(default=None, init=False, repr=False, compare=False)
+    matrix_: f32Array = field(init=False, repr=False, compare=False)
+    loss_: float = field(init=False, repr=False, compare=False)
 
     @property
     @abstractmethod
@@ -75,27 +79,22 @@ class Transform(ABC):
         """Warp `image` into the frame of a template with shape `template_shape` using the fitted transform."""
         ...
 
-    @property
-    def matrix(self) -> f32Array:
-        """Fitted transform parameters. Raises if fit() not called."""
-        if self._matrix is None:
-            raise ValueError("Transform not fitted")
-        return self._matrix
-
-    def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> float:
-        """Fit transform from source X to target Y with point weights. Returns final loss.
+    def fit(self, X: f32Array, Y: f32Array, weights: f32Array) -> Self:
+        """Fit the transform from source points X to target points Y with per-point weights.
 
         Correspondences must be sorted by decreasing match quality: RANSAC draws its early hypotheses from a
         growing prefix of the points (PROSAC-style), so unsorted input silently degrades the fit.
 
-        The loss is inf when the fitted warp is not a valid page mapping over the bounding box of X: it folds,
-        mirrors, or (for perspective) places the horizon inside that box. The matrix is still set.
+        `loss_` is the robust loss plus penalty, for callers to threshold. It is inf when the fitted warp is not a
+        valid page mapping over the bounding box of X: it folds, mirrors, or (for perspective) places the horizon
+        inside that box. `matrix_` is set regardless.
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
         T, loss = self._irls(A, Y, weights, T, loss)
-        self._matrix = T
-        return loss if self._preserves_orientation(X, T) else math.inf
+        self.matrix_ = T
+        self.loss_ = loss if self._preserves_orientation(X, T) else math.inf
+        return self
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
         """Whether the warp's Jacobian determinant is positive on a grid over the bounding box of X."""
@@ -208,7 +207,7 @@ class AffineTransform(_LinearTransform):
         return _similarity_basis(identity=np.array([[0, 0], [1, 0], [0, 1]]), translation=np.array([1, 0, 0]))
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        T = self.matrix.copy()
+        T = self.matrix_.copy()
         image_max_size = max(image.shape[:2])
         template_max_size = max(template_shape)
         T[0] *= image_max_size
@@ -348,7 +347,7 @@ class BernsteinTransform(_LinearTransform):
         By = _bernstein_basis(np.arange(height, dtype=np.float32) / template_max_size, self.degrees)
         Bx = _bernstein_basis(np.arange(width, dtype=np.float32) / template_max_size, self.degrees)
         # The basis is a tensor product (rows of T ordered y-major), so each coordinate map is By @ T_c @ Bx.T.
-        T = self.matrix.reshape(self.degrees + 1, self.degrees + 1, 2).transpose(2, 0, 1)
+        T = self.matrix_.reshape(self.degrees + 1, self.degrees + 1, 2).transpose(2, 0, 1)
         return _remap(image, By @ T @ Bx.T)
 
 
@@ -400,7 +399,7 @@ class PerspectiveTransform(Transform):
         return cast(f32Array, shear_and_stretch + (T[..., :2, 2] ** 2).sum(axis=-1))
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
-        T = self.matrix.copy()
+        T = self.matrix_.copy()
         image_max_size = max(image.shape[:2])
         template_max_size = max(template_shape)
         T[:2, :2] *= image_max_size / template_max_size

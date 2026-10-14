@@ -22,7 +22,11 @@ f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
 
-def register_image(image: u8Array, template: u8Array, transform: Transform) -> Transform:
+def register_image[T: Transform](image: u8Array, template: u8Array, transform: T) -> T:
+    """Fit `transform` to map template coordinates to image coordinates and return it.
+
+    Read `transform.loss_` to reject bad registrations, and `transform.warp` to align the image to the template.
+    """
     image_keypoints, image_descriptors = detect_features(image)
     template_keypoints, template_descriptors = detect_features(template)
     _check_enough("keypoints in the image", len(image_keypoints), transform)
@@ -33,8 +37,7 @@ def register_image(image: u8Array, template: u8Array, transform: Transform) -> T
     )
     _check_enough("matches", len(image_points), transform)
 
-    transform.fit(template_points, image_points, weights)
-    return transform
+    return transform.fit(template_points, image_points, weights)
 
 
 def _check_enough(what: str, count: int, transform: Transform) -> None:

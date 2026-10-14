@@ -355,7 +355,7 @@ def test_fit_respects_model_constraints(
     Y = (X @ similarity_then_shear(0.4)[0] + 0.1).astype(np.float32)
 
     transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
-    singular_values = np.linalg.svd(transform.matrix[1:], compute_uv=False)
+    singular_values = np.linalg.svd(transform.matrix_[1:], compute_uv=False)
     np.testing.assert_allclose(singular_values, expected_singular_values(singular_values), atol=1e-4)
 
 
@@ -393,5 +393,5 @@ def test_fit_reports_infinite_loss_for_invalid_warps(
     X = rng.uniform(0, 1, (60, 2)).astype(np.float32)
     Y = warp(X).astype(np.float32)
 
-    loss = transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
-    assert math.isfinite(loss) == valid
+    transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
+    assert math.isfinite(transform.loss_) == valid

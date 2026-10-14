@@ -28,9 +28,7 @@ The robust loss is measured on sparse feature matches. When the model cannot rep
 
 ## Rejecting bad registrations is the caller's job
 
-By design, callers reject registrations whose loss is NaN or above their own threshold; a bad registration is otherwise passed along like a good one. `fit` sets the loss to inf when the warp is not a valid page mapping over the template keypoints' bounding box (it folds, mirrors, or crosses a perspective horizon). The check uses that bounding box because `fit` does not know the template's shape.
-
-Gap: `register_image` returns the transform but drops the loss `fit` returns (since the class-based refactor in 29ef6d5), and the CLI does not print it, so callers using `register_image` cannot threshold.
+By design, callers reject registrations whose `loss_` is NaN or above their own threshold; a bad registration is otherwise passed along like a good one. `fit` sets `loss_` to inf when the warp is not a valid page mapping over the template keypoints' bounding box (it folds, mirrors, or crosses a perspective horizon). The check uses that bounding box because `fit` does not know the template's shape.
 
 ## Warps do not anti-alias
 

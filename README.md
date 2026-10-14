@@ -11,14 +11,16 @@ Use as a library
 ```python
 import cv2
 import register
-from register.transforms import AffineTransform, PerspectiveTransform
+from register.transforms import PerspectiveTransform
 
 image = cv2.imread("image.png", cv2.IMREAD_GRAYSCALE)
 template = cv2.imread("template.png", cv2.IMREAD_GRAYSCALE)
 
-# Register with a perspective transform (default)
-transform = PerspectiveTransform()
-register.register_image(image, template, transform)
+# Register with a perspective transform. Transforms follow scikit-learn conventions:
+# fitting sets `matrix_` and `loss_`; reject registrations whose loss is NaN or too high
+# (inf marks warps that fold, mirror, or cross a perspective horizon).
+transform = register.register_image(image, template, PerspectiveTransform())
+print(transform.loss_, transform.matrix_)
 
 # Apply the transformation
 registered = transform.warp(image, template.shape)

@@ -21,7 +21,7 @@ from register.transforms import (
 def test_register_against_self_should_produce_identity_transformation() -> None:
     img = np.asarray(Image.open("tests/assets/temp1.jpg"))
     transform = register.register_image(img, img, AffineTransform())
-    np.testing.assert_array_almost_equal(transform.matrix, np.array([[0, 0], [1, 0], [0, 1]]), decimal=5)
+    np.testing.assert_array_almost_equal(transform.matrix_, np.array([[0, 0], [1, 0], [0, 1]]), decimal=5)
 
 
 def test_register_featureless_image_raises() -> None:
@@ -45,6 +45,7 @@ def test_register_featureless_image_raises() -> None:
 def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], transform: Transform) -> None:
     image, template = images
     register.register_image(image, template, transform)
+    assert np.isfinite(transform.loss_)
     registered_image = transform.warp(image, template.shape)
     method_name = type(transform).__name__.replace("Transform", "").lower()
     Image.fromarray(registered_image).save(f"registered_{method_name}.png")
@@ -71,7 +72,7 @@ def test_register_rescaled_copy_maps_pixel_centers(scale: float) -> None:
 
     ys, xs = np.mgrid[0 : template.shape[0] : 256, 0 : template.shape[1] : 256]
     template_points = np.stack([xs.ravel(), ys.ravel()], axis=-1)
-    T = transform.matrix
+    T = transform.matrix_
     image_points = (T[0] + template_points / max(template.shape) @ T[1:]) * max(image.shape)
 
     # cv2.resize aligns pixel centers: template pixel x lands on image pixel (x + 0.5) * scale - 0.5.

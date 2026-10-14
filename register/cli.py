@@ -62,8 +62,9 @@ def main(
         raise ValueError(f"Could not read template from {template_path}")
 
     register_image(cast(u8Array, image), cast(u8Array, template), transform)
+    print(f"loss: {transform.loss_}")
     print("matrix:")
-    print(transform.matrix)
+    print(transform.matrix_)
 
     registered_image = transform.warp(cast(u8Array, image), template.shape)
     cv2.imwrite(out_path, registered_image)
