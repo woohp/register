@@ -252,6 +252,10 @@ class _CenteredAffineTransform(AffineTransform):
     def penalty(self, T: f32Array) -> f32Array:
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
+    def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
+        # Undo AffineTransform's unconstrained sample fit: hypotheses must satisfy this model's constraints.
+        return self.estimate(A, Y, np.ones(Y.shape[:-1], dtype=np.float32))
+
 
 @dataclass
 class RigidTransform(_CenteredAffineTransform):
