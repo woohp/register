@@ -1,3 +1,4 @@
+import math
 from enum import StrEnum
 from typing import Annotated, cast
 
@@ -65,6 +66,8 @@ def main(
     print(f"loss: {transform.loss_}")
     print("matrix:")
     print(transform.matrix_)
+    if not math.isfinite(transform.loss_):
+        raise ValueError("Registration failed: no usable fit, or the fit is not a valid page mapping")
 
     registered_image = transform.warp(cast(u8Array, image), template.shape)
     cv2.imwrite(out_path, registered_image)
