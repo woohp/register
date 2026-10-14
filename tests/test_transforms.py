@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from numpy.typing import NDArray
 
-import register.transforms
+import register.transforms as transforms
 
 
 def uniform_weights(Y: NDArray[np.float32]) -> NDArray[np.float32]:
@@ -19,7 +19,7 @@ def test_estimate_rigid_transform(batch_size: int | None) -> None:
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
 
-    rigid = register.transforms.RigidTransform()
+    rigid = transforms.RigidTransform()
 
     if batch_size is None:
         theta = 1.234
@@ -71,7 +71,7 @@ def test_estimate_similarity_transform(batch_size: int | None) -> None:
     A: NDArray[np.float32]
     expected_shape: tuple[int, ...]
 
-    similarity = register.transforms.SimilarityTransform(reg=0.0)
+    similarity = transforms.SimilarityTransform(reg=0.0)
 
     if batch_size is None:
         theta = 1.234
@@ -132,7 +132,7 @@ def test_similarity_transform_uses_least_squares_uniform_scale_with_noise() -> N
     )
     Y = Y_without_noise + noise
 
-    similarity = register.transforms.SimilarityTransform(reg=0.0)
+    similarity = transforms.SimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
 
     estimated_scale = np.sqrt(np.sum(estimated_T[1:] ** 2) / 2)
@@ -157,7 +157,7 @@ def test_similarity_transform_does_not_fit_anisotropic_scale() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.SimilarityTransform(reg=0.0)
+    similarity = transforms.SimilarityTransform(reg=0.0)
     estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
     estimated_M = estimated_T[1:]
     estimated_MTM = estimated_M.T @ estimated_M
@@ -185,8 +185,8 @@ def test_anisotropic_similarity_transform_rotate_then_scale() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
+    anisotropic = transforms.AnisotropicSimilarityTransform(reg=0.0)
+    estimated_T = anisotropic.estimate(A, Y, uniform_weights(Y))
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
@@ -208,8 +208,8 @@ def test_anisotropic_similarity_transform_scale_then_rotate() -> None:
     A[..., 0] = 1
     Y = A @ T
 
-    similarity = register.transforms.AnisotropicSimilarityTransform(reg=0.0)
-    estimated_T = similarity.estimate(A, Y, uniform_weights(Y))
+    anisotropic = transforms.AnisotropicSimilarityTransform(reg=0.0)
+    estimated_T = anisotropic.estimate(A, Y, uniform_weights(Y))
     np.testing.assert_array_almost_equal(estimated_T, T, 5)
 
 
@@ -227,7 +227,7 @@ def test_anisotropic_similarity_transform_finds_the_least_squares_fit(
         X @ (D @ R if scale_first else R @ D) + 0.1 * rng.standard_normal(X.shape)
     ).astype(np.float32)
 
-    transform = register.transforms.AnisotropicSimilarityTransform()
+    transform = transforms.AnisotropicSimilarityTransform()
     A = transform.expand(X, Y)
     T = transform.estimate(A, Y, uniform_weights(Y))
     M = T[1:]
@@ -273,7 +273,7 @@ def brute_force_anisotropic_error(
 def test_anisotropic_rotate_then_scale_solves_the_hard_case(
     S: NDArray[np.float64], B: NDArray[np.float64], optimum: float
 ) -> None:
-    M = register.transforms._rotate_then_scale(S, B)
+    M = transforms._rotate_then_scale(S, B)
     assert M[:, 0] @ M[:, 1] == pytest.approx(0, abs=1e-12)
     # The brute-force optimum.
     assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(optimum)
@@ -288,7 +288,7 @@ def test_anisotropic_similarity_transform_prefers_the_better_mirrored_fit() -> N
     M = np.array([[c, s], [-s, c]]) @ np.diag([1.3, -0.6])
     Y = (X @ M).astype(np.float32)
 
-    transform = register.transforms.AnisotropicSimilarityTransform()
+    transform = transforms.AnisotropicSimilarityTransform()
     T = transform.estimate(transform.expand(X, Y), Y, uniform_weights(Y))
     assert np.allclose(T[1:], M, atol=1e-5)
 
@@ -297,19 +297,19 @@ def test_bernstein_basis_partition_of_unity() -> None:
     rng = np.random.default_rng(42)
     X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
 
-    bernstein = register.transforms.BernsteinTransform(degrees=2)
-    A1 = bernstein.expand(X, X)
-    assert A1.shape == (100, 9)
-    np.testing.assert_array_almost_equal(A1.sum(axis=-1), np.ones(100), 6)
+    bernstein = transforms.BernsteinTransform(degrees=2)
+    A = bernstein.expand(X, X)
+    assert A.shape == (100, 9)
+    np.testing.assert_array_almost_equal(A.sum(axis=-1), np.ones(100), 6)
 
 
 def test_bernstein_basis_nonnegative() -> None:
     rng = np.random.default_rng(42)
     X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
 
-    bernstein = register.transforms.BernsteinTransform(degrees=2)
-    A2 = bernstein.expand(X, X)
-    assert np.all(A2 >= 0)
+    bernstein = transforms.BernsteinTransform(degrees=2)
+    A = bernstein.expand(X, X)
+    assert np.all(A >= 0)
 
 
 def test_estimate_quadratic_bernstein_transform() -> None:
@@ -318,7 +318,7 @@ def test_estimate_quadratic_bernstein_transform() -> None:
 
     T_true = rng.standard_normal((9, 2)).astype(np.float32) * 0.1
 
-    bernstein = register.transforms.BernsteinTransform(degrees=2, reg=0.0)
+    bernstein = transforms.BernsteinTransform(degrees=2, reg=0.0)
     A = bernstein.expand(X, X)
     Y = (A @ T_true).astype(np.float32)
 
@@ -330,16 +330,16 @@ def test_estimate_quadratic_bernstein_transform() -> None:
 @pytest.mark.parametrize(
     "transform",
     [
-        register.transforms.PerspectiveTransform(),
-        register.transforms.AffineTransform(),
-        register.transforms.RigidTransform(),
-        register.transforms.SimilarityTransform(),
-        register.transforms.AnisotropicSimilarityTransform(),
-        register.transforms.BernsteinTransform(degrees=2),
+        transforms.PerspectiveTransform(),
+        transforms.AffineTransform(),
+        transforms.RigidTransform(),
+        transforms.SimilarityTransform(),
+        transforms.AnisotropicSimilarityTransform(),
+        transforms.BernsteinTransform(degrees=2),
     ],
 )
 def test_estimate_weight_acts_like_point_multiplicity(
-    transform: register.transforms.Transform,
+    transform: transforms.Transform,
 ) -> None:
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (30, 2)).astype(np.float32)
@@ -372,7 +372,7 @@ def test_estimate_perspective_transform(batch_size: int | None) -> None:
     Y_homogeneous = X_homogeneous @ H.swapaxes(-2, -1)
     Y = (Y_homogeneous[..., :2] / Y_homogeneous[..., 2:]).astype(np.float32)
 
-    perspective = register.transforms.PerspectiveTransform()
+    perspective = transforms.PerspectiveTransform()
     A = perspective.expand(X, Y)
     estimated_T = perspective.estimate(A, Y, uniform_weights(Y))
 
@@ -413,22 +413,22 @@ def perspective_params(
     ("transform", "to_params"),
     [
         (
-            register.transforms.AffineTransform(),
+            transforms.AffineTransform(),
             lambda L, t: np.vstack([t, L]).astype(np.float32),
         ),
         (
-            register.transforms.BernsteinTransform(degrees=2),
+            transforms.BernsteinTransform(degrees=2),
             lambda L, t: bernstein_params(2, L, t),
         ),
         (
-            register.transforms.BernsteinTransform(degrees=3),
+            transforms.BernsteinTransform(degrees=3),
             lambda L, t: bernstein_params(3, L, t),
         ),
-        (register.transforms.PerspectiveTransform(), perspective_params),
+        (transforms.PerspectiveTransform(), perspective_params),
     ],
 )
 def test_penalty_ignores_similarity_and_charges_shear(
-    transform: register.transforms.Transform,
+    transform: transforms.Transform,
     to_params: Callable[
         [NDArray[np.float64], NDArray[np.float64]], NDArray[np.float32]
     ],
@@ -442,12 +442,12 @@ def test_penalty_ignores_similarity_and_charges_shear(
 @pytest.mark.parametrize(
     "transform",
     [
-        register.transforms.AffineTransform(reg=1.0),
-        register.transforms.BernsteinTransform(degrees=2, reg=1.0),
+        transforms.AffineTransform(reg=1.0),
+        transforms.BernsteinTransform(degrees=2, reg=1.0),
     ],
 )
 def test_strong_regularization_does_not_bias_similarity_fits(
-    transform: register.transforms.Transform,
+    transform: transforms.Transform,
 ) -> None:
     rng = np.random.default_rng(0)
     L, t = similarity_then_shear(0.0)
@@ -462,12 +462,12 @@ def test_strong_regularization_does_not_bias_similarity_fits(
 @pytest.mark.parametrize(
     ("transform", "expected_singular_values"),
     [
-        (register.transforms.RigidTransform(), lambda s: np.array([1.0, 1.0])),
-        (register.transforms.SimilarityTransform(), lambda s: np.full(2, s.mean())),
+        (transforms.RigidTransform(), lambda s: np.array([1.0, 1.0])),
+        (transforms.SimilarityTransform(), lambda s: np.full(2, s.mean())),
     ],
 )
 def test_fit_respects_model_constraints(
-    transform: register.transforms.Transform,
+    transform: transforms.Transform,
     expected_singular_values: Callable[[NDArray[np.float32]], NDArray[np.float64]],
 ) -> None:
     rng = np.random.default_rng(0)
@@ -498,29 +498,29 @@ def beyond_horizon(X: NDArray[np.float32]) -> NDArray[np.float32]:
     ("transform", "warp", "valid"),
     [
         (
-            register.transforms.AffineTransform(),
+            transforms.AffineTransform(),
             lambda X: X @ similarity_then_shear(0.2)[0],
             True,
         ),
         (
-            register.transforms.PerspectiveTransform(),
+            transforms.PerspectiveTransform(),
             lambda X: X @ similarity_then_shear(0.2)[0],
             True,
         ),
         (
-            register.transforms.BernsteinTransform(degrees=2),
+            transforms.BernsteinTransform(degrees=2),
             lambda X: X @ similarity_then_shear(0.2)[0],
             True,
         ),
-        (register.transforms.AffineTransform(), mirrored, False),
-        (register.transforms.PerspectiveTransform(), mirrored, False),
-        (register.transforms.AnisotropicSimilarityTransform(), mirrored, False),
-        (register.transforms.BernsteinTransform(degrees=2), folded, False),
-        (register.transforms.PerspectiveTransform(), beyond_horizon, False),
+        (transforms.AffineTransform(), mirrored, False),
+        (transforms.PerspectiveTransform(), mirrored, False),
+        (transforms.AnisotropicSimilarityTransform(), mirrored, False),
+        (transforms.BernsteinTransform(degrees=2), folded, False),
+        (transforms.PerspectiveTransform(), beyond_horizon, False),
     ],
 )
 def test_fit_reports_infinite_loss_for_invalid_warps(
-    transform: register.transforms.Transform,
+    transform: transforms.Transform,
     warp: Callable[[NDArray[np.float32]], NDArray[np.float32]],
     valid: bool,
 ) -> None:
@@ -533,8 +533,8 @@ def test_fit_reports_infinite_loss_for_invalid_warps(
 
 
 def collinear(n: int) -> NDArray[np.float32]:
-    # Points on y = 0: every homography sample drawn from them has H[2, 2] = 0,
-    # so normalizing it gives NaNs.
+    # Points on y = 0 produce degenerate homography samples whose normalization
+    # can divide by zero.
     return np.stack([np.arange(n), np.zeros(n)], axis=-1).astype(np.float32)
 
 
@@ -544,14 +544,14 @@ def test_fit_skips_degenerate_hypotheses() -> None:
     # The collinear points form the first RANSAC sample.
     weights = np.linspace(1, 0.5, len(X), dtype=np.float32)
 
-    transform = register.transforms.PerspectiveTransform().fit(X, X, weights)
+    transform = transforms.PerspectiveTransform().fit(X, X, weights)
     np.testing.assert_allclose(transform.matrix_, np.eye(3), atol=1e-4)
 
 
 def test_fit_reports_infinite_loss_when_every_hypothesis_is_degenerate() -> None:
     # The minimal sample size: every hypothesis is fitted to the same degenerate points.
     X = collinear(4)
-    transform = register.transforms.PerspectiveTransform().fit(
+    transform = transforms.PerspectiveTransform().fit(
         X, X, np.ones(len(X), dtype=np.float32)
     )
     assert transform.loss_ == math.inf
@@ -560,7 +560,7 @@ def test_fit_reports_infinite_loss_when_every_hypothesis_is_degenerate() -> None
 def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     rng = np.random.default_rng(0)
     X = rng.uniform(0, 1, (20, 2)).astype(np.float32)
-    transform = register.transforms.AffineTransform()
+    transform = transforms.AffineTransform()
     # RANSAC fits samples with estimate_sample; only IRLS steps go through estimate.
     monkeypatch.setattr(
         transform,
@@ -576,9 +576,10 @@ def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_orientation_check_catches_a_horizon_at_the_bounding_box_edge() -> None:
     # x' = -1 / (x - 1e-4), y' = y / (x - 1e-4): the horizon x = 1e-4 lies just inside
     # the box [0, 1]^2, closer to its edge than a finite-difference step.
-    # Fitting this warp is hopeless in float32, so check the exact homography.
+    # Check a known homography directly: fitting points near this horizon is
+    # unstable in float32.
     H = np.array([[0, 0, -1], [0, 1, 0], [1, 0, -1e-4]], dtype=np.float32)
     X = np.array([[0, 0], [1, 1]], dtype=np.float32)
-    perspective = register.transforms.PerspectiveTransform()
+    perspective = transforms.PerspectiveTransform()
     assert not perspective._preserves_orientation(X, H.T)
     assert perspective._preserves_orientation(X + 0.5, H.T)

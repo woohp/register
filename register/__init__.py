@@ -52,9 +52,8 @@ def _check_enough(what: str, count: int, transform: Transform) -> None:
 
 def resize_and_blur(image: u8Array) -> u8Array:
     image = aspect_aware_resize(image, TARGET_MAX_SIZE)
-    # A 3x3 kernel truncates sigma=2 to weights of about (0.32, 0.36, 0.32),
-    # nearly a box blur: the kernel size, not sigma, sets the blur strength. Kept as is;
-    # changing it would shift detection results.
+    # With sigma=2, a 3x3 kernel gives nearly box-blur weights (0.32, 0.36, 0.32).
+    # The kernel size sets the blur strength; changing it would alter detection.
     return cast(u8Array, cv2.GaussianBlur(image, ksize=(3, 3), sigmaX=2.0, sigmaY=2.0))
 
 
@@ -81,6 +80,7 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     )
     keypoints = keypoints[:MAX_KEYPOINTS]
     keypoints, descriptors = processor.compute(small_image, keypoints)
+
     if not keypoints:  # descriptors is None rather than an empty array in this case
         no_descriptors = np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
         return np.empty((0, 2), dtype=np.float32), no_descriptors

@@ -16,8 +16,7 @@ from .utils.sampling import get_random_samples
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
-# Tiny ridge that keeps degenerate RANSAC samples (e.g. repeated points) solvable;
-# it is not a prior.
+# Tiny ridge to keep degenerate RANSAC samples (e.g. repeated points) solvable.
 _CONDITIONING_RIDGE = 1e-6
 
 
@@ -43,7 +42,7 @@ class Transform(ABC):
     @property
     @abstractmethod
     def min_samples(self) -> int:
-        """Minimum points needed to estimate transform."""
+        """Minimum number of points needed to estimate the transform."""
         ...
 
     @abstractmethod
@@ -99,10 +98,12 @@ class Transform(ABC):
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
+
         if math.isfinite(loss):  # otherwise every hypothesis was degenerate
             T, loss = self._irls(A, Y, weights, T, loss)
             if not self._preserves_orientation(X, T):
                 loss = math.inf
+
         self.matrix_ = T
         self.loss_ = loss
         return self
@@ -202,6 +203,7 @@ class _LinearTransform(Transform):
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
         n_params = A.shape[-1]
         A_T_W = A.swapaxes(-2, -1) * weights[..., None, :]
+
         # Solve for vec(T) (row-major): squared error treats output columns separately,
         # the penalty couples them.
         gram = (
@@ -212,14 +214,15 @@ class _LinearTransform(Transform):
             + self.reg * self._non_similarity_projector()
             + _CONDITIONING_RIDGE * np.eye(2 * n_params)
         )
+
         rhs = (A_T_W @ Y).reshape(*A.shape[:-2], 2 * n_params, 1)
         vec_T = np.linalg.solve(lhs, rhs)
         return vec_T.reshape(*A.shape[:-2], n_params, 2).astype(np.float32)
 
     def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
-        # Fit the sample without the similarity prior (only the conditioning ridge)
-        # rather than pre-softening it, so an extreme sample yields an extreme
-        # hypothesis for scoring to reject. This also decouples the output columns.
+        # Fit without the similarity penalty so extreme hypotheses remain extreme
+        # and can be rejected by scoring. The conditioning ridge keeps degenerate
+        # samples solvable; output columns can be fitted independently.
         A_T = A.swapaxes(-2, -1)
         lhs = A_T @ A + _CONDITIONING_RIDGE * np.eye(A.shape[-1], dtype=A.dtype)
         return cast(f32Array, np.linalg.solve(lhs, A_T @ Y))
@@ -295,8 +298,9 @@ def _similarity_basis(
 class _CenteredAffineTransform(AffineTransform):
     """Internal base for affine-like transforms estimated around centroids.
 
-    These models are constraints in themselves (rigid and similarity cannot shear,
-    and stretch is the point of the anisotropic model), so they carry no penalty.
+    These models already constrain deformation: rigid and similarity cannot shear,
+    and independent stretch is intentional in the anisotropic model. No distortion
+    penalty is added.
     """
 
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
@@ -328,8 +332,8 @@ class _CenteredAffineTransform(AffineTransform):
         return np.zeros(T.shape[:-2], dtype=T.dtype)
 
     def estimate_sample(self, A: f32Array, Y: f32Array) -> f32Array:
-        # Undo AffineTransform's unconstrained sample fit: hypotheses must satisfy this
-        # model's constraints.
+        # Unlike AffineTransform's sample fit, hypotheses must satisfy this model's
+        # constraints.
         return self.estimate(A, Y, np.ones(Y.shape[:-1], dtype=np.float32))
 
 
@@ -380,15 +384,13 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
     def estimate_centered(
         self, src_centered: f32Array, dst_centered: f32Array
     ) -> f32Array:
-        # Exact least squares for both orders: scales along the template's axes then
-        # rotation (M = D R), or rotation then scales along the image's axes (M = R D).
-        # With row vectors the residual |x M - y|^2 summed over points is
-        # tr(M^T S M) - 2 tr(M^T B) + const (S includes the conditioning ridge).
-        # Both solvers allow a negative scale. An orientation-preserving candidate beats
-        # a mirrored one, then the better fit wins; a mirrored result makes `fit` report
-        # an infinite loss. So does an order whose optimum is mirrored, even if it has a
-        # proper local optimum: data that fits best mirrored is rejected rather than
-        # searched for its best proper fit.
+        # Fit both scale orders: template-axis scales then rotation (M = D R), or
+        # rotation then image-axis scales (M = R D). With row vectors, the
+        # ridge-augmented objective is tr(M^T S M) - 2 tr(M^T B) + const.
+        # Prefer an orientation-preserving optimum, then the lower objective.
+        # If neither candidate preserves orientation, `fit` reports infinite loss.
+        # We do not search within an order for a proper alternative to its
+        # mirrored optimum.
         src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
         S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
         B = src.swapaxes(-2, -1) @ dst
@@ -432,11 +434,13 @@ def _rotate_then_scale(
 ) -> NDArray[np.float64]:
     """Least-squares M = R D (orthogonal columns m1, m2), by bisection.
 
-    With Lagrange multiplier mu for m1 . m2 = 0, stationarity reads
-    (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2 for p = m1 + m2 and q = m1 - m2,
-    and the constraint becomes |p| = |q|. For |mu| <= the smallest eigenvalue of S the
-    Lagrangian is convex, so a root of |p|^2 - |q|^2 there is the global optimum,
-    and on that interval it decreases.
+    With multiplier mu for m1 . m2 = 0, define p = m1 + m2 and q = m1 - m2.
+    Stationarity gives (S + mu I) p = b1 + b2 and (S - mu I) q = b1 - b2.
+    The constraint is |p| = |q|.
+
+    For |mu| <= the smallest eigenvalue of S, the Lagrangian is convex.
+    The residual |p|^2 - |q|^2 decreases with mu on this interval, so a zero
+    gives the global optimum.
     """
     eigenvalues, U = np.linalg.eigh(S)
 
@@ -458,12 +462,11 @@ def _rotate_then_scale(
         positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
         lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
 
-    # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly
-    # zero, and in the "hard case" (no right-hand side along that axis) the root sits at
-    # the end of the interval, where that component is free. Taking it from |p| = |q|
-    # gives the same value at an interior root and the right one in the hard case.
-    # The bracket end with |p| > |q| (lo) or |q| >= |p| (hi) leaves that component a
-    # nonnegative square, so |p| = |q| holds exactly.
+    # Near a multiplier bound, the weakest-axis component of q (mu > 0)
+    # or p (mu < 0) is ill-conditioned. At the bound it can be undetermined
+    # (the hard case). Recover it from |p| = |q| instead of dividing.
+    # Use lo when growing q and hi when growing p; this leaves a nonnegative
+    # squared length for the missing component, even if the midpoint rounds badly.
     upper = lo + hi >= 0
     mu = np.where(upper, lo, hi)
     p, q = solve(a, mu), solve(c, -mu)

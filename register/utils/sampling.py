@@ -27,8 +27,7 @@ def get_random_samples(
     seen: set[tuple[int, ...]] = set()
 
     for i in range(max_samples):
-        # Preserve the original prefix-growth behavior: at iteration i we only draw from
-        # combinations of the first min(k + i, N) points.
+        # Grow the prefix by one point per hypothesis, favoring stronger matches.
         prefix_size = min(k + i, N)
 
         if prefix_size == N:
@@ -38,10 +37,8 @@ def get_random_samples(
                 n_combos <= DENSE_SUFFIX_MAX_COMBOS
                 and remaining_samples >= DENSE_SUFFIX_MIN_FRACTION * remaining_combos
             ):
-                # Once the prefix stops growing, every remaining draw comes from the
-                # same full combination space. To avoid too many collisions in the
-                # dense tail, it can be cheaper to materialize the remaining unseen
-                # combinations and keep what we need than to keep rejection sampling.
+                # Draw the suffix from a shuffled list when rejection sampling would
+                # spend too much time on collisions.
                 all_combos = list(combinations(range(N), k))
                 unseen = [combo for combo in all_combos if combo not in seen]
                 rng.shuffle(unseen)

@@ -55,8 +55,7 @@ def main(
         str | None,
         Option(
             "--blend",
-            help="Also write a red/blue/cyan overlay of the result "
-            "against the template.",
+            help="Also write a red/blue/cyan ink overlay against the template.",
         ),
     ] = None,
 ) -> None:
@@ -78,6 +77,7 @@ def main(
     print(f"loss: {transform.loss_}")
     print("matrix:")
     print(transform.matrix_)
+
     if not math.isfinite(transform.loss_):
         raise ValueError(
             "Registration failed: no usable fit, or the fit is not a valid page mapping"
