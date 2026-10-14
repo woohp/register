@@ -22,16 +22,18 @@ f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
 
 
-def register_image(image1: u8Array, image2: u8Array, transform: Transform) -> Transform:
-    keypoints1, descriptors1 = detect_features(image1)
-    keypoints2, descriptors2 = detect_features(image2)
-    _check_enough("keypoints in the image", len(keypoints1), transform)
-    _check_enough("keypoints in the template", len(keypoints2), transform)
+def register_image(image: u8Array, template: u8Array, transform: Transform) -> Transform:
+    image_keypoints, image_descriptors = detect_features(image)
+    template_keypoints, template_descriptors = detect_features(template)
+    _check_enough("keypoints in the image", len(image_keypoints), transform)
+    _check_enough("keypoints in the template", len(template_keypoints), transform)
 
-    X, Y, weights = do_match(keypoints1, descriptors1, keypoints2, descriptors2)
-    _check_enough("matches", len(X), transform)
+    image_points, template_points, weights = do_match(
+        image_keypoints, image_descriptors, template_keypoints, template_descriptors
+    )
+    _check_enough("matches", len(image_points), transform)
 
-    transform.fit(Y, X, weights)
+    transform.fit(template_points, image_points, weights)
     return transform
 
 
@@ -77,37 +79,40 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
 
 
 def do_match(
-    keypoints1: f32Array,
-    descriptors1: u8Array,
-    keypoints2: f32Array,
-    descriptors2: u8Array,
+    image_keypoints: f32Array,
+    image_descriptors: u8Array,
+    template_keypoints: f32Array,
+    template_descriptors: u8Array,
 ) -> tuple[f32Array, f32Array, f32Array]:
-    distances = hamming_distance_matrix(descriptors1.view(np.uint64), descriptors2.view(np.uint64))
+    # Rows are image keypoints, columns are template keypoints.
+    distances = hamming_distance_matrix(image_descriptors.view(np.uint64), template_descriptors.view(np.uint64))
 
-    x_distances_indices = np.argpartition(distances, (1, 2), axis=1)[:, :2]
-    y_distances_indices = np.argpartition(distances, (1, 2), axis=0)[:2, :]
+    image_top2 = np.argpartition(distances, (1, 2), axis=1)[:, :2]
+    template_top2 = np.argpartition(distances, (1, 2), axis=0)[:2, :]
 
-    x_distances = np.take_along_axis(distances, x_distances_indices, 1)
-    y_distances = np.take_along_axis(distances, y_distances_indices, 0)
+    image_top2_distances = np.take_along_axis(distances, image_top2, 1)
+    template_top2_distances = np.take_along_axis(distances, template_top2, 0)
 
-    should_take_x = (x_distances[:, 1] - x_distances[:, 0]) >= IMAGE_MATCH_MARGIN
-    should_take_y = (y_distances[1, :] - y_distances[0, :]) >= TEMPLATE_MATCH_MARGIN
+    keep_image = (image_top2_distances[:, 1] - image_top2_distances[:, 0]) >= IMAGE_MATCH_MARGIN
+    template_unambiguous = (template_top2_distances[1, :] - template_top2_distances[0, :]) >= TEMPLATE_MATCH_MARGIN
 
-    should_take_x[y_distances_indices[0, ~should_take_y]] = False
+    keep_image[template_top2[0, ~template_unambiguous]] = False
 
-    y_indices = x_distances_indices[should_take_x, 0]
-    weights = np.exp(distances[should_take_x, y_indices].astype(np.float32) * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS))
+    matched_template = image_top2[keep_image, 0]
+    weights = np.exp(
+        distances[keep_image, matched_template].astype(np.float32) * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS)
+    )
 
-    X = keypoints1[should_take_x]
-    Y = keypoints2[y_indices]
+    image_points = image_keypoints[keep_image]
+    template_points = template_keypoints[matched_template]
 
-    weights_sort_indices = np.argsort(weights)[::-1]
-    X = X[weights_sort_indices]
-    Y = Y[weights_sort_indices]
-    weights = weights[weights_sort_indices]
+    order = np.argsort(weights)[::-1]
+    image_points = image_points[order]
+    template_points = template_points[order]
+    weights = weights[order]
 
-    X.flags.writeable = False
-    Y.flags.writeable = False
+    image_points.flags.writeable = False
+    template_points.flags.writeable = False
     weights.flags.writeable = False
 
-    return X, Y, weights
+    return image_points, template_points, weights

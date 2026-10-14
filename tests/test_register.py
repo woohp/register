@@ -45,14 +45,14 @@ def test_register_featureless_image_raises() -> None:
     ],
 )
 def test_register_image1_transforms(images: tuple[NDArray[np.uint8], NDArray[np.uint8]], transform: Transform) -> None:
-    image1, template_image = images
-    register.register_image(image1, template_image, transform)
-    registered_image = transform.warp(image1, template_image.shape)
+    image, template = images
+    register.register_image(image, template, transform)
+    registered_image = transform.warp(image, template.shape)
     method_name = type(transform).__name__.replace("Transform", "").lower()
     Image.fromarray(registered_image).save(f"registered_{method_name}.png")
 
     # Unregistered ink overlap is ~0.03; even rigid fits (the page has perspective) roughly double it.
-    assert ink_dice(registered_image, template_image) > 1.5 * ink_dice(image1, template_image)
+    assert ink_dice(registered_image, template) > 1.5 * ink_dice(image, template)
 
 
 def ink_dice(image: NDArray[np.uint8], template: NDArray[np.uint8]) -> float:
