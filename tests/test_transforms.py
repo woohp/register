@@ -395,3 +395,35 @@ def test_fit_reports_infinite_loss_for_invalid_warps(
 
     transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
     assert math.isfinite(transform.loss_) == valid
+
+
+def collinear(n: int) -> NDArray[np.float32]:
+    # Points on y = 0: every homography sample drawn from them has H[2, 2] = 0, so normalizing it gives NaNs.
+    return np.stack([np.arange(n), np.zeros(n)], axis=-1).astype(np.float32)
+
+
+def test_fit_skips_degenerate_hypotheses() -> None:
+    rng = np.random.default_rng(0)
+    X = np.concatenate([collinear(4), rng.uniform(0, 1, (16, 2)).astype(np.float32)])
+    weights = np.linspace(1, 0.5, len(X), dtype=np.float32)  # the collinear points form the first RANSAC sample
+
+    transform = register.transforms.PerspectiveTransform().fit(X, X, weights)
+    np.testing.assert_allclose(transform.matrix_, np.eye(3), atol=1e-4)
+
+
+def test_fit_reports_infinite_loss_when_every_hypothesis_is_degenerate() -> None:
+    X = collinear(4)  # the minimal sample size, so every hypothesis is fitted to the same degenerate points
+    transform = register.transforms.PerspectiveTransform().fit(X, X, np.ones(len(X), dtype=np.float32))
+    assert transform.loss_ == math.inf
+
+
+def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    rng = np.random.default_rng(0)
+    X = rng.uniform(0, 1, (20, 2)).astype(np.float32)
+    transform = register.transforms.AffineTransform()
+    # RANSAC fits samples with estimate_sample; only IRLS steps go through estimate.
+    monkeypatch.setattr(transform, "estimate", lambda A, Y, weights: np.full((3, 2), np.nan, dtype=np.float32))
+
+    transform.fit(X, X, np.ones(len(X), dtype=np.float32))
+    assert math.isfinite(transform.loss_)
+    np.testing.assert_allclose(transform.matrix_, [[0, 0], [1, 0], [0, 1]], atol=1e-4)

@@ -85,15 +85,18 @@ class Transform(ABC):
         Correspondences must be sorted by decreasing match quality: RANSAC draws its early hypotheses from a
         growing prefix of the points (PROSAC-style), so unsorted input silently degrades the fit.
 
-        `loss_` is the robust loss plus penalty, for callers to threshold. It is inf when the fitted warp is not a
-        valid page mapping over the bounding box of X: it folds, mirrors, or (for perspective) places the horizon
-        inside that box. `matrix_` is set regardless.
+        `loss_` is the robust loss plus penalty, for callers to threshold. It is inf when every RANSAC hypothesis is
+        degenerate, or when the fitted warp is not a valid page mapping over the bounding box of X: it folds, mirrors,
+        or (for perspective) places the horizon inside that box. `matrix_` is set regardless.
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
-        T, loss = self._irls(A, Y, weights, T, loss)
+        if math.isfinite(loss):  # otherwise every hypothesis was degenerate
+            T, loss = self._irls(A, Y, weights, T, loss)
+            if not self._preserves_orientation(X, T):
+                loss = math.inf
         self.matrix_ = T
-        self.loss_ = loss if self._preserves_orientation(X, T) else math.inf
+        self.loss_ = loss
         return self
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
@@ -117,6 +120,9 @@ class Transform(ABC):
 
         distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
         losses = self._loss(distance_squared, weights, Ts)
+        # Degenerate samples (e.g. collinear points for a homography) can give non-finite hypotheses, and argmin
+        # would pick a NaN.
+        losses = np.where(np.isfinite(losses), losses, np.inf)
 
         best_idx = np.argmin(losses)
         return Ts[best_idx], losses[best_idx].item()
@@ -133,7 +139,7 @@ class Transform(ABC):
             new_distance_squared = get_distance_squared(self.transform_points(A, new_T), Y)
             new_loss = self._loss(new_distance_squared, weights, new_T).item()
 
-            if new_loss >= loss:
+            if not new_loss < loss:  # also rejects a non-finite step
                 break
 
             converged = loss - new_loss < 1e-6
