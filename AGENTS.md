@@ -13,7 +13,7 @@ Target Python 3.14 and current dependency releases. When dependency work is in s
 
 ## Fitting invariants
 
-- All fitting happens in coordinates normalized by each image's longest side: `register_image` resizes to a longest side of `TARGET_MAX_SIZE` and divides keypoints by it. `warp` converts back to pixels.
+- All fitting happens in coordinates normalized by each image's longest side, with pixel centers at integer pixel coordinates. `detect_features` detects on a copy resized to a longest side of `TARGET_MAX_SIZE`, maps keypoints back to original pixels (`cv2.resize` aligns pixel centers), then normalizes. `warp` converts back to pixels.
 - Transforms map **template → image** (`fit(template_points, image_points)`) because warping is inverse mapping: every template pixel samples the image.
 - `fit` expects correspondences sorted by decreasing match quality. RANSAC's sampler (`utils/sampling.py`) is PROSAC-style and draws early hypotheses from a growing prefix.
 - `Transform` methods are batched: RANSAC estimates and scores every hypothesis at once, so `expand`, `estimate`, `transform_points`, and `penalty` must accept arbitrary leading batch dimensions. Keep them vectorized.

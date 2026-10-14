@@ -1,3 +1,5 @@
+from typing import cast
+
 import cv2
 import numpy as np
 import pytest
@@ -60,3 +62,19 @@ def ink_dice(image: NDArray[np.uint8], template: NDArray[np.uint8]) -> float:
 
 def ink_mask(image: NDArray[np.uint8]) -> NDArray[np.bool]:
     return cv2.adaptiveThreshold(image, 1, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 35, 10).astype(bool)
+
+
+@pytest.mark.parametrize("scale", [0.5, 2.0])
+def test_register_rescaled_copy_maps_pixel_centers(scale: float) -> None:
+    template = np.asarray(Image.open("tests/assets/temp1.jpg").convert("L"))
+    interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    image = cast(NDArray[np.uint8], cv2.resize(template, None, fx=scale, fy=scale, interpolation=interpolation))
+    transform = register.register_image(image, template, AffineTransform())
+
+    ys, xs = np.mgrid[0 : template.shape[0] : 256, 0 : template.shape[1] : 256]
+    template_points = np.stack([xs.ravel(), ys.ravel()], axis=-1)
+    T = transform.matrix
+    image_points = (T[0] + template_points / max(template.shape) @ T[1:]) * max(image.shape)
+
+    # cv2.resize aligns pixel centers: template pixel x lands on image pixel (x + 0.5) * scale - 0.5.
+    np.testing.assert_allclose(image_points, (template_points + 0.5) * scale - 0.5, atol=0.15)

@@ -23,9 +23,6 @@ u8Array = NDArray[np.uint8]
 
 
 def register_image(image1: u8Array, image2: u8Array, transform: Transform) -> Transform:
-    image1 = resize_and_blur(image1)
-    image2 = resize_and_blur(image2)
-
     keypoints1, descriptors1 = detect_features(image1)
     keypoints2, descriptors2 = detect_features(image2)
     _check_enough("keypoints in the image", len(keypoints1), transform)
@@ -55,17 +52,25 @@ def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
 
 
 def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
+    """Detect keypoints on a downscaled copy of `image`; coordinates are normalized by its longest side."""
+    max_size = max(image.shape[:2])
+    small_image = resize_and_blur(image)
+
     detector = cv2.xfeatures2d.BRISK.create(octaves=5)
     # 5.0 is OpenCV's documented TEBLID sampling scale for BRISK keypoints.
     processor = cv2.xfeatures2d.TEBLID.create(5.0, cv2.xfeatures2d.TEBLID_SIZE_512_BITS)
 
-    keypoints: Sequence[cv2.KeyPoint] = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
+    keypoints: Sequence[cv2.KeyPoint] = sorted(
+        detector.detect(small_image, None), key=lambda kp: kp.response, reverse=True
+    )
     keypoints = keypoints[:MAX_KEYPOINTS]
-    keypoints, descriptors = processor.compute(image, keypoints)
+    keypoints, descriptors = processor.compute(small_image, keypoints)
     if not keypoints:  # descriptors is None rather than an empty array in this case
         return np.empty((0, 2), dtype=np.float32), np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
     keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
-    keypoints_array /= TARGET_MAX_SIZE
+    # cv2.resize aligns pixel centers, so a small-image coordinate maps back as (x + 0.5) / ratio - 0.5.
+    ratio = TARGET_MAX_SIZE / max_size
+    keypoints_array = ((keypoints_array + 0.5) / ratio - 0.5) / max_size
     return keypoints_array, cast(u8Array, descriptors)
 
 
