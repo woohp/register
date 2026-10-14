@@ -304,8 +304,10 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
         # Exact least squares for both orders: scales along the template's axes then rotation (M = D R), or rotation
         # then scales along the image's axes (M = R D). With row vectors the residual |x M - y|^2 summed over points is
-        # tr(M^T S M) - 2 tr(M^T B) + const. Both solvers allow a negative scale; a mirrored candidate is chosen only
-        # when the other one is mirrored too, and `fit` then reports an infinite loss.
+        # tr(M^T S M) - 2 tr(M^T B) + const (S includes the conditioning ridge). Both solvers allow a negative scale. An
+        # orientation-preserving candidate beats a mirrored one, then the better fit wins; a mirrored result makes `fit`
+        # report an infinite loss. So does an order whose optimum is mirrored, even if it has a proper local optimum:
+        # data that fits best mirrored is rejected rather than searched for its best proper fit.
         src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
         S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
         B = src.swapaxes(-2, -1) @ dst
@@ -313,8 +315,9 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
         errors = np.einsum("...ji,...jk,...ki->...", candidates, S, candidates) - 2 * np.einsum(
             "...ji,...ji->...", candidates, B
         )
-        errors = np.where(np.linalg.det(candidates) > 0, errors, np.inf)
-        use_first = (errors[0] <= errors[1])[..., None, None]
+        proper = np.linalg.det(candidates) > 0
+        use_first = (proper[0] > proper[1]) | ((proper[0] == proper[1]) & (errors[0] <= errors[1]))
+        use_first = use_first[..., None, None]
         return np.where(use_first, candidates[0], candidates[1]).astype(np.float32)
 
 

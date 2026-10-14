@@ -260,6 +260,20 @@ def test_anisotropic_rotate_then_scale_solves_the_hard_case(
     assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(optimum)  # the brute-force optimum
 
 
+def test_anisotropic_similarity_transform_fits_mirrored_data_with_the_better_order() -> None:
+    # Both orders' optima are mirrored here, so neither is preferred for orientation; the better fit must still win
+    # (fit then reports an infinite loss).
+    rng = np.random.default_rng(0)
+    X = (rng.standard_normal((50, 2)) @ [[1, 0.8], [0, 0.3]]).astype(np.float32)
+    c, s = math.cos(0.7), math.sin(0.7)
+    M = np.array([[c, s], [-s, c]]) @ np.diag([1.3, -0.6])
+    Y = (X @ M).astype(np.float32)
+
+    transform = register.transforms.AnisotropicSimilarityTransform()
+    T = transform.estimate(transform.expand(X, Y), Y, uniform_weights(Y))
+    assert np.allclose(T[1:], M, atol=1e-5)
+
+
 def test_bernstein_basis_partition_of_unity() -> None:
     rng = np.random.default_rng(42)
     X = rng.uniform(0, 1, (100, 2)).astype(np.float32)
