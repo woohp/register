@@ -74,6 +74,7 @@ def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     keypoints, descriptors = processor.compute(small_image, keypoints)
     if not keypoints:  # descriptors is None rather than an empty array in this case
         return np.empty((0, 2), dtype=np.float32), np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
+
     keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
     # cv2.resize aligns pixel centers, so a small-image coordinate maps back as (x + 0.5) / ratio - 0.5.
     ratio = TARGET_MAX_SIZE / max_size

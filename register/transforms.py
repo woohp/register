@@ -10,9 +10,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .utils import (
-    get_distance_squared,
-)
+from .utils import get_distance_squared
 from .utils.sampling import get_random_samples
 
 f32Array = NDArray[np.float32]
@@ -297,6 +295,17 @@ class SimilarityTransform(_CenteredAffineTransform):
         return cast(f32Array, scale * R)
 
 
+def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+    return _nearest_rotation(src_centered.swapaxes(-2, -1) @ dst_centered)
+
+
+def _nearest_rotation(M: NDArray[np.floating]) -> f32Array:
+    """Closest proper rotation (det = +1) to each matrix in M, in the Frobenius sense."""
+    U, _, Vt = np.linalg.svd(M)
+    U[..., :, -1] *= np.sign(np.linalg.det(U @ Vt))[..., None]
+    return U @ Vt
+
+
 @dataclass
 class AnisotropicSimilarityTransform(_CenteredAffineTransform):
     """5-DOF transform: translation, rotation, and independent scales along the template's or the image's axes."""
@@ -311,14 +320,14 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
         src, dst = src_centered.astype(np.float64), dst_centered.astype(np.float64)
         S = src.swapaxes(-2, -1) @ src + _CONDITIONING_RIDGE * np.eye(2)
         B = src.swapaxes(-2, -1) @ dst
+
         candidates = np.stack([_scale_then_rotate(S, B), _rotate_then_scale(S, B)])
-        errors = np.einsum("...ji,...jk,...ki->...", candidates, S, candidates) - 2 * np.einsum(
-            "...ji,...ji->...", candidates, B
-        )
+        quadratic = np.einsum("...ji,...jk,...ki->...", candidates, S, candidates)
+        errors = quadratic - 2 * np.einsum("...ji,...ji->...", candidates, B)
         proper = np.linalg.det(candidates) > 0
+
         use_first = (proper[0] > proper[1]) | ((proper[0] == proper[1]) & (errors[0] <= errors[1]))
-        use_first = use_first[..., None, None]
-        return np.where(use_first, candidates[0], candidates[1]).astype(np.float32)
+        return np.where(use_first[..., None, None], candidates[0], candidates[1]).astype(np.float32)
 
 
 def _scale_then_rotate(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -331,6 +340,7 @@ def _scale_then_rotate(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
     # Row i holds the (cos, sin) coefficients of axis i's covariance with y R^T.
     rows = np.stack([B[..., 0, :], np.stack([B[..., 1, 1], -B[..., 1, 0]], axis=-1)], axis=-2)
     Q = rows.swapaxes(-2, -1) @ (rows / variances[..., None])
+
     cos_sin = np.linalg.eigh(Q)[1][..., :, -1]
     c, s = cos_sin[..., 0], cos_sin[..., 1]
     R = np.stack([np.stack([c, s], axis=-1), np.stack([-s, c], axis=-1)], axis=-2)
@@ -354,11 +364,13 @@ def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
 
     a = (U.swapaxes(-2, -1) @ (B[..., :, 0] + B[..., :, 1])[..., None])[..., 0]
     c = (U.swapaxes(-2, -1) @ (B[..., :, 0] - B[..., :, 1])[..., None])[..., 0]
+
     lo, hi = -eigenvalues[..., 0], eigenvalues[..., 0]
     for _ in range(64):  # float64 bisection reaches machine precision well within 64 halvings
         mu = (lo + hi) / 2
         positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
         lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
+
     # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly zero, and in the "hard case"
     # (no right-hand side along that axis) the root sits at the end of the interval, where that component is free.
     # Taking it from |p| = |q| gives the same value at an interior root and the right one in the hard case. The bracket
@@ -370,19 +382,9 @@ def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
     p0 = np.copysign(np.sqrt(np.maximum((q**2).sum(axis=-1) - p[..., 1] ** 2, 0)), a[..., 0])
     q[..., 0] = np.where(upper, q0, q[..., 0])
     p[..., 0] = np.where(upper, p[..., 0], p0)
+
     p, q = (U @ p[..., None])[..., 0], (U @ q[..., None])[..., 0]
     return np.stack([p + q, p - q], axis=-1) / 2
-
-
-def _estimate_rigid_matrix(src_centered: f32Array, dst_centered: f32Array) -> f32Array:
-    return _nearest_rotation(src_centered.swapaxes(-2, -1) @ dst_centered)
-
-
-def _nearest_rotation(M: NDArray[np.floating]) -> f32Array:
-    """Closest proper rotation (det = +1) to each matrix in M, in the Frobenius sense."""
-    U, _, Vt = np.linalg.svd(M)
-    U[..., :, -1] *= np.sign(np.linalg.det(U @ Vt))[..., None]
-    return U @ Vt
 
 
 @dataclass
@@ -422,6 +424,12 @@ def _bernstein_basis(t: f32Array, degrees: int) -> f32Array:
     binomials = np.array([math.comb(degrees, i) for i in k], dtype=np.float32)
     t = t[..., None]
     return (binomials * t**k * (1 - t) ** (degrees - k)).astype(np.float32)
+
+
+def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
+    """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
+    maps = maps * np.float32(max(image.shape[:2]))
+    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_LINEAR))
 
 
 @dataclass
@@ -482,9 +490,3 @@ class PerspectiveTransform(Transform):
             u8Array,
             cv2.warpPerspective(image, T.T, dsize=template_shape[::-1], flags=cv2.INTER_LINEAR | cv2.WARP_INVERSE_MAP),
         )
-
-
-def _remap(image: u8Array, maps: NDArray[np.floating]) -> u8Array:
-    """Sample `image` at `maps`, which holds (x, y) coordinates normalized by the image's longest side."""
-    maps = maps * np.float32(max(image.shape[:2]))
-    return cast(u8Array, cv2.remap(image, maps[0], maps[1], interpolation=cv2.INTER_LINEAR))
