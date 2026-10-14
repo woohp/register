@@ -356,14 +356,15 @@ def _rotate_then_scale(S: NDArray[np.float64], B: NDArray[np.float64]) -> NDArra
         mu = (lo + hi) / 2
         positive = (solve(a, mu) ** 2 - solve(c, -mu) ** 2).sum(axis=-1) > 0
         lo, hi = np.where(positive, mu, lo), np.where(positive, hi, mu)
-    mu = (lo + hi) / 2
-    p, q = solve(a, mu), solve(c, -mu)
     # Along S's weakest axis, the solve for q (mu > 0) or p (mu < 0) divides by nearly zero, and in the "hard case"
     # (no right-hand side along that axis) the root sits at the end of the interval, where that component is free.
-    # Taking it from |p| = |q| gives the same value at an interior root and the right one in the hard case.
+    # Taking it from |p| = |q| gives the same value at an interior root and the right one in the hard case. The bracket
+    # end with |p| > |q| (lo) or |q| >= |p| (hi) leaves that component a nonnegative square, so |p| = |q| holds exactly.
+    upper = lo + hi >= 0
+    mu = np.where(upper, lo, hi)
+    p, q = solve(a, mu), solve(c, -mu)
     q0 = np.copysign(np.sqrt(np.maximum((p**2).sum(axis=-1) - q[..., 1] ** 2, 0)), c[..., 0])
     p0 = np.copysign(np.sqrt(np.maximum((q**2).sum(axis=-1) - p[..., 1] ** 2, 0)), a[..., 0])
-    upper = mu >= 0
     q[..., 0] = np.where(upper, q0, q[..., 0])
     p[..., 0] = np.where(upper, p[..., 0], p0)
     p, q = (U @ p[..., None])[..., 0], (U @ q[..., None])[..., 0]

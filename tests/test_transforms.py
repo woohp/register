@@ -241,13 +241,23 @@ def brute_force_anisotropic_error(X: NDArray[np.float32], Y: NDArray[np.float32]
     return float((Y_centered**2).sum() - explained)
 
 
-def test_anisotropic_rotate_then_scale_solves_the_hard_case() -> None:
-    # B has no component along S's weakest axis that the multiplier could balance, so the optimum sits at the end of
-    # the multiplier's interval; stopping the bisection there would leave m1 . m2 = 1/9.
-    S, B = np.diag([1.0, 2.0]), np.array([[0.0, 0.0], [1.0, 1.0]])
+@pytest.mark.parametrize(
+    ("S", "B", "optimum"),
+    [
+        # B has no component along S's weakest axis that the multiplier could balance, so the optimum sits at the end
+        # of the multiplier's interval; stopping the bisection there would leave m1 . m2 = 1/9.
+        (np.diag([1.0, 2.0]), np.array([[0.0, 0.0], [1.0, 1.0]]), -2 / 3),
+        # Nearly that, with nearly equal eigenvalues: the root is within rounding of the interval's end, where a
+        # rounded multiplier would leave m1 . m2 = -1e-4.
+        (np.diag([1.0, 1 + 1e-15]), np.array([[0.5, 0.5], [5e-16, -5e-16]]), -0.25),
+    ],
+)
+def test_anisotropic_rotate_then_scale_solves_the_hard_case(
+    S: NDArray[np.float64], B: NDArray[np.float64], optimum: float
+) -> None:
     M = register.transforms._rotate_then_scale(S, B)
     assert M[:, 0] @ M[:, 1] == pytest.approx(0, abs=1e-12)
-    assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(-2 / 3)  # the brute-force optimum
+    assert np.trace(M.T @ S @ M) - 2 * np.trace(M.T @ B) == pytest.approx(optimum)  # the brute-force optimum
 
 
 def test_bernstein_basis_partition_of_unity() -> None:
