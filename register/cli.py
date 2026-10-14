@@ -70,10 +70,15 @@ def main(
         raise ValueError("Registration failed: no usable fit, or the fit is not a valid page mapping")
 
     registered_image = transform.warp(cast(u8Array, image), template.shape)
-    cv2.imwrite(out_path, registered_image)
+    _write(out_path, registered_image)
 
     if blend_path is not None:
-        cv2.imwrite(blend_path, color_blend(registered_image, cast(u8Array, template)))
+        _write(blend_path, color_blend(registered_image, cast(u8Array, template)))
+
+
+def _write(path: str, image: u8Array) -> None:
+    if not cv2.imwrite(path, image):
+        raise OSError(f"Could not write {path}")
 
 
 def color_blend(image: u8Array, template: u8Array, block_size: int = 35, offset: int = 10) -> u8Array:
