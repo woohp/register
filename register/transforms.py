@@ -94,12 +94,26 @@ class Transform(ABC):
 
         Correspondences must be sorted by decreasing match quality: RANSAC draws its early hypotheses from a
         growing prefix of the points (PROSAC-style), so unsorted input silently degrades the fit.
+
+        The loss is inf when the fitted warp is not a valid page mapping over the bounding box of X: it folds,
+        mirrors, or (for perspective) places the horizon inside that box. The matrix is still set.
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
         T, loss = self._irls(A, Y, weights, T, loss)
         self._matrix = T
-        return loss
+        return loss if self._preserves_orientation(X, T) else math.inf
+
+    def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
+        """Whether the warp's Jacobian determinant is positive on a grid over the bounding box of X."""
+        steps = np.linspace(0, 1, 16, dtype=np.float32)
+        grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2) * np.ptp(X, axis=0) + X.min(axis=0)
+        h = np.float32(1e-3)
+        points = np.concatenate([grid, grid + [h, 0], grid + [0, h]]).astype(np.float32)
+        mapped = self.transform_points(self.expand(points, points), T)
+        origin, dx, dy = np.split(mapped, 3)
+        dx, dy = dx - origin, dy - origin
+        return bool(np.all(dx[:, 0] * dy[:, 1] - dx[:, 1] * dy[:, 0] > 0))
 
     def _geman_mcclure_loss(self, d: f32Array) -> f32Array:
         return (d / (d + self.sigma)).astype(np.float32)

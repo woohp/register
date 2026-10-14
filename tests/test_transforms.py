@@ -394,3 +394,41 @@ def test_fit_respects_model_constraints(
     transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
     singular_values = np.linalg.svd(transform.matrix[1:], compute_uv=False)
     np.testing.assert_allclose(singular_values, expected_singular_values(singular_values), atol=1e-4)
+
+
+def mirrored(X: NDArray[np.float32]) -> NDArray[np.float32]:
+    return np.stack([1 - X[:, 0], X[:, 1]], axis=-1)
+
+
+def folded(X: NDArray[np.float32]) -> NDArray[np.float32]:
+    return np.stack([(X[:, 0] - 0.5) ** 2, X[:, 1]], axis=-1)
+
+
+def beyond_horizon(X: NDArray[np.float32]) -> NDArray[np.float32]:
+    # Homography whose horizon (zero projective depth) is the line x = 0.5.
+    return X / (1 - 2 * X[:, :1])
+
+
+@pytest.mark.parametrize(
+    ("transform", "warp", "valid"),
+    [
+        (register.transforms.AffineTransform(), lambda X: X @ similarity_then_shear(0.2)[0], True),
+        (register.transforms.PerspectiveTransform(), lambda X: X @ similarity_then_shear(0.2)[0], True),
+        (register.transforms.BernsteinTransform(degrees=2), lambda X: X @ similarity_then_shear(0.2)[0], True),
+        (register.transforms.AffineTransform(), mirrored, False),
+        (register.transforms.PerspectiveTransform(), mirrored, False),
+        (register.transforms.BernsteinTransform(degrees=2), folded, False),
+        (register.transforms.PerspectiveTransform(), beyond_horizon, False),
+    ],
+)
+def test_fit_reports_infinite_loss_for_invalid_warps(
+    transform: register.transforms.Transform,
+    warp: Callable[[NDArray[np.float32]], NDArray[np.float32]],
+    valid: bool,
+) -> None:
+    rng = np.random.default_rng(0)
+    X = rng.uniform(0, 1, (60, 2)).astype(np.float32)
+    Y = warp(X).astype(np.float32)
+
+    loss = transform.fit(X, Y, np.ones(len(X), dtype=np.float32))
+    assert math.isfinite(loss) == valid

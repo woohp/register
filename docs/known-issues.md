@@ -26,13 +26,11 @@ The robust loss is measured on sparse feature matches. When the model cannot rep
 
 TPS produced an all-black image until the IRLS weighting fix; it now registers reasonably (Dice about 0.31 on both pages). Every match is a control point, so each IRLS step solves a dense (N+3)-square system, and the warp costs O(H·W·N). The `wendland-transform` branch explored a compactly supported alternative.
 
-## No detection of failed registrations
+## Rejecting bad registrations is the caller's job
 
-A bad registration is returned like a good one. Options, cheapest first:
+By design, callers reject registrations whose loss is NaN or above their own threshold; a bad registration is otherwise passed along like a good one. `fit` sets the loss to inf when the warp is not a valid page mapping over the template keypoints' bounding box (it folds, mirrors, or crosses a perspective horizon). The check uses that bounding box because `fit` does not know the template's shape.
 
-1. Reject near-collinear (degenerate) RANSAC samples before estimating; they are the main source of extreme-shear hypotheses.
-2. Reject implausible hypotheses outright, e.g. a large singular-value ratio of the linear part, or Bernstein warps that fold (non-positive Jacobian determinant somewhere on the page).
-3. Report a confidence such as the fraction of matches the final fit explains, so callers can reject.
+Gap: `register_image` returns the transform but drops the loss `fit` returns (since the class-based refactor in 29ef6d5), and the CLI does not print it, so callers using `register_image` cannot threshold.
 
 ## Warps do not anti-alias
 
