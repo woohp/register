@@ -9,6 +9,14 @@ from .transforms import Transform
 from .utils import hamming_distance_matrix
 
 TARGET_MAX_SIZE = 1_200
+MAX_KEYPOINTS = 2_000  # strongest BRISK responses kept per image
+DESCRIPTOR_BITS = 512
+# Hamming-distance margins (in bits) by which a match must beat the runner-up: an image keypoint's best template
+# match must be clearly better than its second best, and a template keypoint's best image match must be unique.
+IMAGE_MATCH_MARGIN = 10
+TEMPLATE_MATCH_MARGIN = 1
+# Match weights are exp(-MATCH_WEIGHT_DECAY * distance / DESCRIPTOR_BITS).
+MATCH_WEIGHT_DECAY = 20
 
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
@@ -48,13 +56,14 @@ def aspect_aware_resize(image: u8Array, max_size: float) -> u8Array:
 
 def detect_features(image: u8Array) -> tuple[f32Array, u8Array]:
     detector = cv2.xfeatures2d.BRISK.create(octaves=5)
+    # 5.0 is OpenCV's documented TEBLID sampling scale for BRISK keypoints.
     processor = cv2.xfeatures2d.TEBLID.create(5.0, cv2.xfeatures2d.TEBLID_SIZE_512_BITS)
 
     keypoints: Sequence[cv2.KeyPoint] = sorted(detector.detect(image, None), key=lambda kp: kp.response, reverse=True)
-    keypoints = keypoints[:2000]
+    keypoints = keypoints[:MAX_KEYPOINTS]
     keypoints, descriptors = processor.compute(image, keypoints)
     if not keypoints:  # descriptors is None rather than an empty array in this case
-        return np.empty((0, 2), dtype=np.float32), np.empty((0, 64), dtype=np.uint8)
+        return np.empty((0, 2), dtype=np.float32), np.empty((0, DESCRIPTOR_BITS // 8), dtype=np.uint8)
     keypoints_array = np.array([kp.pt for kp in keypoints], dtype=np.float32)
     keypoints_array /= TARGET_MAX_SIZE
     return keypoints_array, cast(u8Array, descriptors)
@@ -74,13 +83,13 @@ def do_match(
     x_distances = np.take_along_axis(distances, x_distances_indices, 1)
     y_distances = np.take_along_axis(distances, y_distances_indices, 0)
 
-    should_take_x = (x_distances[:, 1] - x_distances[:, 0]) >= 10
-    should_take_y = (y_distances[1, :] - y_distances[0, :]) >= 1
+    should_take_x = (x_distances[:, 1] - x_distances[:, 0]) >= IMAGE_MATCH_MARGIN
+    should_take_y = (y_distances[1, :] - y_distances[0, :]) >= TEMPLATE_MATCH_MARGIN
 
     should_take_x[y_distances_indices[0, ~should_take_y]] = False
 
     y_indices = x_distances_indices[should_take_x, 0]
-    weights = np.exp(distances[should_take_x, y_indices].astype(np.float32) * (-20 / 512))
+    weights = np.exp(distances[should_take_x, y_indices].astype(np.float32) * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS))
 
     X = keypoints1[should_take_x]
     Y = keypoints2[y_indices]

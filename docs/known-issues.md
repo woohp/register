@@ -39,7 +39,3 @@ A bad registration is returned like a good one. Options, cheapest first:
 ## Warps do not anti-alias
 
 OpenCV's `warpAffine`, `warpPerspective` and `remap` sample bilinearly. When the image has more pixels per template pixel than one, pre-shrink it with `cv2.resize(..., interpolation=cv2.INTER_AREA)` before warping. One global factor is exact for affine-family models and approximate for perspective, Bernstein and TPS. The test pages are the same size, so this does not show up there.
-
-## Minor
-
-- `do_match` and `detect_features` use unnamed constants (ratio gaps of 10 and 1, weight scale -20/512, 2000 keypoints).
