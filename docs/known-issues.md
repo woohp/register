@@ -28,7 +28,7 @@ The robust loss is measured on sparse feature matches. When the model cannot rep
 
 ## Rejecting bad registrations is the caller's job
 
-By design, callers reject registrations whose `loss_` is NaN or above their own threshold; a bad registration is otherwise passed along like a good one. `fit` sets `loss_` to inf when the warp is not a valid page mapping over the template keypoints' bounding box (it folds, mirrors, or crosses a perspective horizon). The check uses that bounding box because `fit` does not know the template's shape.
+By design, callers reject registrations whose `loss_` is NaN or above their own threshold; a bad registration is otherwise passed along like a good one. `fit` sets `loss_` to inf when the warp is not a valid page mapping over the template keypoints' bounding box (it folds, mirrors, or crosses a perspective horizon). The check uses that bounding box because `fit` does not know the template's shape. It is exact for the affine family (constant Jacobian) and perspective (the Jacobian determinant is det(H)/w³ with w affine, so the box's corners decide). For Bernstein it samples the Jacobian determinant on a 16×16 grid with finite differences, so a fold narrower than the grid spacing passes; a guarantee would need bounds on the determinant polynomial (e.g. its Bernstein coefficients, with subdivision). Finite differences are also why perspective uses the analytic test: a step can jump across a horizon lying just inside the box.
 
 ## Warps do not anti-alias
 

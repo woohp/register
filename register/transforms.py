@@ -87,7 +87,9 @@ class Transform(ABC):
 
         `loss_` is the robust loss plus penalty, for callers to threshold. It is inf when every RANSAC hypothesis is
         degenerate, or when the fitted warp is not a valid page mapping over the bounding box of X: it folds, mirrors,
-        or (for perspective) places the horizon inside that box. `matrix_` is set regardless.
+        or (for perspective) places the horizon inside that box. The check is exact for affine-family and perspective
+        transforms; for Bernstein it samples a grid, so folds smaller than its spacing can slip through. `matrix_` is
+        set regardless.
         """
         A = self.expand(X, Y)
         T, loss = self._ransac(A, Y, weights)
@@ -100,7 +102,11 @@ class Transform(ABC):
         return self
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
-        """Whether the warp's Jacobian determinant is positive on a grid over the bounding box of X."""
+        """Whether the warp's Jacobian determinant is positive over the bounding box of X.
+
+        This generic version samples a grid with finite differences, so it can miss folds between grid points.
+        Models with an exact test override it.
+        """
         steps = np.linspace(0, 1, 16, dtype=np.float32)
         grid = np.stack(np.meshgrid(steps, steps), axis=-1).reshape(-1, 2) * np.ptp(X, axis=0) + X.min(axis=0)
         h = np.float32(1e-3)
@@ -211,6 +217,9 @@ class AffineTransform(_LinearTransform):
 
     def similarity_basis(self) -> f32Array:
         return _similarity_basis(identity=np.array([[0, 0], [1, 0], [0, 1]]), translation=np.array([1, 0, 0]))
+
+    def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
+        return bool(np.linalg.det(T[1:]) > 0)
 
     def warp(self, image: u8Array, template_shape: tuple[int, int]) -> u8Array:
         T = self.matrix_.copy()
@@ -398,6 +407,13 @@ class PerspectiveTransform(Transform):
         w = Y_hat[..., -1:]
         w = np.where(w == 0, np.finfo(w.dtype).eps, w)
         return (Y_hat[..., :-1] / w).astype(np.float32)
+
+    def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
+        # The Jacobian determinant is det(H) / w**3 for projective depth w, which is affine in the point. So it is
+        # positive over the bounding box exactly when w has the sign of det(H) at the box's corners.
+        (x0, y0), (x1, y1) = X.min(axis=0), X.max(axis=0)
+        corners = np.array([[x0, y0, 1], [x1, y0, 1], [x0, y1, 1], [x1, y1, 1]], dtype=np.float32)
+        return bool(np.all(corners @ T[:, 2] * np.linalg.det(T) > 0))
 
     def penalty(self, T: f32Array) -> f32Array:
         # T is H transposed (normalized so H[2, 2] = 1): T[:2, :2] is the linear part, T[:2, 2] the perspective terms.

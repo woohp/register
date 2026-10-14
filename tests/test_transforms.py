@@ -427,3 +427,12 @@ def test_irls_rejects_non_finite_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     transform.fit(X, X, np.ones(len(X), dtype=np.float32))
     assert math.isfinite(transform.loss_)
     np.testing.assert_allclose(transform.matrix_, [[0, 0], [1, 0], [0, 1]], atol=1e-4)
+
+
+def test_orientation_check_catches_a_horizon_at_the_bounding_box_edge() -> None:
+    # x' = -1 / (x - 1e-4), y' = y / (x - 1e-4): the horizon x = 1e-4 lies just inside the box [0, 1]^2, closer to its
+    # edge than a finite-difference step. Fitting this warp is hopeless in float32, so check the exact homography.
+    H = np.array([[0, 0, -1], [0, 1, 0], [1, 0, -1e-4]], dtype=np.float32)
+    X = np.array([[0, 0], [1, 1]], dtype=np.float32)
+    assert not register.transforms.PerspectiveTransform()._preserves_orientation(X, H.T)
+    assert register.transforms.PerspectiveTransform()._preserves_orientation(X + 0.5, H.T)
