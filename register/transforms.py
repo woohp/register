@@ -385,8 +385,9 @@ class PerspectiveTransform(Transform):
         return A
 
     def estimate(self, A: f32Array, Y: f32Array, weights: f32Array) -> f32Array:
-        WA = A * np.sqrt(weights)[..., None, None]
-        _, _, Vh = np.linalg.svd(WA.reshape(*A.shape[:-3], -1, 9))
+        WA = (A * np.sqrt(weights)[..., None, None]).reshape(*A.shape[:-3], -1, 9)
+        # The reduced SVD skips the large unused U, but a 4-point sample's 8 rows only give its null vector in full.
+        _, _, Vh = np.linalg.svd(WA, full_matrices=WA.shape[-2] < 9)
         H = Vh[..., -1, :].reshape(*A.shape[:-3], 3, 3)
         H /= H[..., -1:, -1:]
         return H.swapaxes(-2, -1)
