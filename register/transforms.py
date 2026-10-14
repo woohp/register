@@ -302,6 +302,8 @@ class AnisotropicSimilarityTransform(_CenteredAffineTransform):
     """5-DOF transform: translation, rotation, and independent x/y scale."""
 
     def estimate_centered(self, src_centered: f32Array, dst_centered: f32Array) -> f32Array:
+        # Approximates the constrained least-squares fit by projecting the affine fit onto rotation and axis scales,
+        # in whichever order (scale then rotate, or rotate then scale) it is closer to. See docs/known-issues.md.
         SXX = src_centered.swapaxes(-2, -1) @ src_centered
         SXY = src_centered.swapaxes(-2, -1) @ dst_centered
         Id = np.eye(2, dtype=src_centered.dtype)
