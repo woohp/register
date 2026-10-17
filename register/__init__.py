@@ -6,7 +6,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 from .transforms import Transform
-from .utils import hamming_distance_matrix
 
 TARGET_MAX_SIZE = 1_200
 MAX_KEYPOINTS = 2_000  # strongest BRISK responses kept per image
@@ -100,31 +99,29 @@ def do_match(
     template_keypoints: f32Array,
     template_descriptors: u8Array,
 ) -> tuple[f32Array, f32Array, f32Array]:
-    # Rows are image keypoints, columns are template keypoints.
-    distances = hamming_distance_matrix(
-        image_descriptors.view(np.uint64), template_descriptors.view(np.uint64)
+    # Each keypoint's two nearest neighbors on the other side, closest first.
+    image_top2_distances, image_top2 = _hamming_top2(
+        image_descriptors, template_descriptors
+    )
+    template_top2_distances, template_top2 = _hamming_top2(
+        template_descriptors, image_descriptors
     )
 
-    image_top2 = np.argpartition(distances, (1, 2), axis=1)[:, :2]
-    template_top2 = np.argpartition(distances, (1, 2), axis=0)[:2, :]
-
-    image_top2_distances = np.take_along_axis(distances, image_top2, 1)
-    template_top2_distances = np.take_along_axis(distances, template_top2, 0)
-
     image_gap = image_top2_distances[:, 1] - image_top2_distances[:, 0]
-    template_gap = template_top2_distances[1, :] - template_top2_distances[0, :]
+    template_gap = template_top2_distances[:, 1] - template_top2_distances[:, 0]
     image_unambiguous = image_gap >= IMAGE_MATCH_MARGIN
     template_unambiguous = template_gap >= TEMPLATE_MATCH_MARGIN
 
     # Keep mutual nearest neighbors only, so every template keypoint is matched at
-    # most once.
+    # most once. Tie-breaking cannot change the result: a tie for the nearest
+    # neighbor leaves a gap of 0, which fails both margins.
     best_template = image_top2[:, 0]
-    mutual = template_top2[0, best_template] == np.arange(len(distances))
+    mutual = template_top2[best_template, 0] == np.arange(len(image_descriptors))
     keep_image = image_unambiguous & mutual & template_unambiguous[best_template]
 
     matched_template = best_template[keep_image]
     weights = np.exp(
-        distances[keep_image, matched_template].astype(np.float32)
+        image_top2_distances[keep_image, 0].astype(np.float32)
         * (-MATCH_WEIGHT_DECAY / DESCRIPTOR_BITS)
     )
 
@@ -141,3 +138,13 @@ def do_match(
     weights.flags.writeable = False
 
     return image_points, template_points, weights
+
+
+def _hamming_top2(
+    query: u8Array, train: u8Array
+) -> tuple[NDArray[np.int32], NDArray[np.int32]]:
+    """Hamming distances to, and indices of, each query's two nearest train rows."""
+    distances, indices = cv2.batchDistance(
+        query, train, cv2.CV_32S, normType=cv2.NORM_HAMMING, K=2
+    )
+    return cast(NDArray[np.int32], distances), cast(NDArray[np.int32], indices)

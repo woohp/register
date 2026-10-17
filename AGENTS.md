@@ -25,5 +25,4 @@ Target Python 3.14 and current dependency releases. When dependency work is in s
 
 - Arrays are float32. numpy's type stubs often widen results to float64; use `cast(f32Array, ...)` instead of changing runtime dtypes.
 - `_LinearTransform.squared_residuals` must stay float64 internally: it expands |aT − y|² into a matrix product, and in float32 the cancellation swamps inlier residuals.
-- Use numba only where numpy would allocate large temporaries (the Hamming matrix). Decorate with `numba_njit` from `register/utils` using explicit signatures and `cache=True`. Only the outermost `prange` runs in parallel, so write inner loops with `range`.
 - OpenCV's `warpAffine`, `warpPerspective`, and `remap` have no area interpolation (`INTER_AREA` silently becomes bilinear), so warps do not anti-alias when they downsample.
