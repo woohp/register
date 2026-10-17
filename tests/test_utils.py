@@ -5,27 +5,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from register.utils import get_distance_squared
 from register.utils.sampling import get_random_samples
-
-
-@pytest.mark.parametrize(
-    ("batch_size", "num_points", "dim"),
-    [
-        (None, 2, 2),
-        (3, 5, 4),
-    ],
-)
-def test_get_distance_squared(
-    batch_size: int | None, num_points: int, dim: int
-) -> None:
-    rng = np.random.default_rng(0)
-    shape = (num_points, dim) if batch_size is None else (batch_size, num_points, dim)
-    x = rng.normal(0, 1, shape).astype(np.float32)
-    y = rng.normal(0, 1, shape).astype(np.float32)
-
-    expected = np.sum((x - y) ** 2, axis=-1)
-    np.testing.assert_allclose(get_distance_squared(x, y), expected, atol=1e-5)
 
 
 def test_get_random_samples_rejects_too_many_items() -> None:

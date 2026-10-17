@@ -10,7 +10,6 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .utils import get_distance_squared
 from .utils.sampling import get_random_samples
 
 f32Array = NDArray[np.float32]
@@ -71,6 +70,16 @@ class Transform(ABC):
     @abstractmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
         """Apply transform T to points in design matrix A."""
+        ...
+
+    @staticmethod
+    @abstractmethod
+    def squared_residuals(A: f32Array, T: f32Array, Y: f32Array) -> f32Array:
+        """Squared residual of each point of A, transformed by T, against its target Y.
+
+        Equals ((transform_points(A, T) - Y) ** 2).sum(-1) for an unbatched A, computed
+        with one matrix product so RANSAC can score thousands of hypotheses quickly.
+        """
         ...
 
     @abstractmethod
@@ -137,8 +146,8 @@ class Transform(ABC):
 
         Ts = self.estimate_sample(A[samples], Y[samples])
 
-        distance_squared = get_distance_squared(self.transform_points(A, Ts), Y)
-        losses = self._loss(distance_squared, weights, Ts)
+        squared_residuals = self.squared_residuals(A, Ts, Y)
+        losses = self._loss(squared_residuals, weights, Ts)
         # Degenerate samples (e.g. collinear points for a homography) can give
         # non-finite hypotheses, and argmin would pick a NaN.
         losses = np.where(np.isfinite(losses), losses, np.inf)
@@ -150,36 +159,34 @@ class Transform(ABC):
         self, A: f32Array, Y: f32Array, weights: f32Array, T: f32Array, loss: float
     ) -> tuple[f32Array, float]:
         normalized_weights = weights / weights.sum()
-        distance_squared = get_distance_squared(self.transform_points(A, T), Y)
+        squared_residuals = self.squared_residuals(A, T, Y)
 
         for _ in range(self.n_iters_irls):
             # Weighting each squared residual by the derivative of the Geman-McClure
             # loss gives a quadratic majorizer of the robust objective,
             # so the weighted least-squares fit is the next iterate.
             irls_weights = (
-                normalized_weights * self.sigma / (distance_squared + self.sigma) ** 2
+                normalized_weights * self.sigma / (squared_residuals + self.sigma) ** 2
             )
             new_T = self.estimate(A, Y, irls_weights)
-            new_distance_squared = get_distance_squared(
-                self.transform_points(A, new_T), Y
-            )
-            new_loss = self._loss(new_distance_squared, weights, new_T).item()
+            new_squared_residuals = self.squared_residuals(A, new_T, Y)
+            new_loss = self._loss(new_squared_residuals, weights, new_T).item()
 
             if not new_loss < loss:  # also rejects a non-finite step
                 break
 
             converged = loss - new_loss < 1e-6
-            T, loss, distance_squared = new_T, new_loss, new_distance_squared
+            T, loss, squared_residuals = new_T, new_loss, new_squared_residuals
             if converged:
                 break
 
         return T, loss
 
     def _loss(
-        self, distance_squared: f32Array, weights: f32Array, T: f32Array
+        self, squared_residuals: f32Array, weights: f32Array, T: f32Array
     ) -> NDArray[np.floating]:
         objective = np.average(
-            self._geman_mcclure_loss(distance_squared), axis=-1, weights=weights
+            self._geman_mcclure_loss(squared_residuals), axis=-1, weights=weights
         )
         return objective + self.reg * self.penalty(T)
 
@@ -231,6 +238,33 @@ class _LinearTransform(Transform):
     @staticmethod
     def transform_points(A: f32Array, T: f32Array) -> f32Array:
         return A @ T
+
+    @staticmethod
+    def squared_residuals(A: f32Array, T: f32Array, Y: f32Array) -> f32Array:
+        # |a T - y|² = a T Tᵀ aᵀ - 2 a T yᵀ + |y|² is a dot product between per-point
+        # features (a ⊗ a, a ⊗ y, |y|²) and per-hypothesis ones (T Tᵀ, -2 T, 1),
+        # so one matrix product scores every hypothesis on every point.
+        # The terms are ~1 while inlier residuals are ~1e-5, and float32 would cancel
+        # them away, so build both sides from float64 inputs.
+        A, T, Y = A.astype(np.float64), T.astype(np.float64), Y.astype(np.float64)
+        n_points, batch_shape = A.shape[0], T.shape[:-2]
+        point_features = np.concatenate(
+            [
+                (A[:, :, None] * A[:, None, :]).reshape(n_points, -1),
+                (A[:, :, None] * Y[:, None, :]).reshape(n_points, -1),
+                (Y**2).sum(axis=-1, keepdims=True),
+            ],
+            axis=-1,
+        )
+        hypothesis_features = np.concatenate(
+            [
+                (T @ T.swapaxes(-2, -1)).reshape(*batch_shape, -1),
+                -2 * T.reshape(*batch_shape, -1),
+                np.ones((*batch_shape, 1)),
+            ],
+            axis=-1,
+        )
+        return (hypothesis_features @ point_features.T).astype(np.float32)
 
     def penalty(self, T: f32Array) -> f32Array:
         vec_T = T.reshape(*T.shape[:-2], -1)
@@ -571,6 +605,14 @@ class PerspectiveTransform(Transform):
         w = Y_hat[..., -1:]
         w = np.where(w == 0, np.finfo(w.dtype).eps, w)
         return (Y_hat[..., :-1] / w).astype(np.float32)
+
+    @staticmethod
+    def squared_residuals(A: f32Array, T: f32Array, Y: f32Array) -> f32Array:
+        # One matrix product for every hypothesis, unpacked into separate x/y/w planes
+        # (much faster than transform_points' batched matmul and interleaved output).
+        x, y, w = np.einsum("nj,...jc->c...n", A[:, 0, :3], T, optimize=True)
+        w = np.where(w == 0, np.finfo(w.dtype).eps, w)
+        return cast(f32Array, (x / w - Y[:, 0]) ** 2 + (y / w - Y[:, 1]) ** 2)
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
         # The Jacobian determinant is det(H) / w**3 for projective depth w,

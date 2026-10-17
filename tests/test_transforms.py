@@ -383,6 +383,33 @@ def test_estimate_perspective_transform(batch_size: int | None) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "transform",
+    [
+        transforms.AffineTransform(),
+        transforms.BernsteinTransform(degrees=2),
+        transforms.PerspectiveTransform(),
+    ],
+)
+def test_squared_residuals_match_transformed_points(
+    transform: transforms.Transform,
+) -> None:
+    rng = np.random.default_rng(0)
+    X = rng.uniform(0, 1, (30, 2)).astype(np.float32)
+    # Inlier-scale noise: squared residuals are ~1e-5 of the squared coordinates,
+    # small enough that computing them by cancellation in float32 would fail.
+    Y = (X + rng.normal(0, 0.003, X.shape)).astype(np.float32)
+    A = transform.expand(X, Y)
+    samples = rng.choice(len(X), (5, transform.min_samples))
+    Ts = transform.estimate_sample(A[samples], Y[samples])
+
+    for T in [Ts, Ts[0]]:
+        expected = ((transform.transform_points(A, T) - Y) ** 2).sum(-1)
+        np.testing.assert_allclose(
+            transform.squared_residuals(A, T, Y), expected, rtol=1e-3, atol=1e-10
+        )
+
+
 def similarity_then_shear(
     shear: float,
 ) -> tuple[NDArray[np.float64], NDArray[np.float64]]:
