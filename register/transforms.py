@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
-from .utils.sampling import get_random_samples
+from .sampling import get_random_samples
 
 f32Array = NDArray[np.float32]
 u8Array = NDArray[np.uint8]
@@ -120,6 +120,11 @@ class Transform(ABC):
 
     def _preserves_orientation(self, X: f32Array, T: f32Array) -> bool:
         """Whether the warp's Jacobian determinant is positive over X's bounding box.
+
+        This also rejects mirrored warps, which several models can represent. A mirrored
+        fit is never genuine: the descriptors do not match under reflection, so a truly
+        mirrored page yields mostly wrong matches. Callers expecting mirrored inputs
+        should flip the image.
 
         This generic version samples a grid with finite differences,
         so it can miss folds between grid points. Models with an exact test override it.

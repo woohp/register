@@ -2,6 +2,8 @@
 
 Shortcomings found while reviewing the fitting pipeline, with the evidence we had at the time. Most of them are blocked on the same thing: there is no evaluation dataset, only the two pages in `tests/assets/`. Numbers below are ink-mask Dice overlap with the template (what `tests/test_register.py` uses; an unregistered page scores ~0.03).
 
+The defaults are not arbitrary, though. The RANSAC-then-IRLS design and many of the hyperparameters (e.g. `sigma`, the match margins, the match-weight decay) come from an earlier system where they were tuned on a large collection of mostly scanned documents, with an older pipeline (BRISK descriptors, among other differences). That data is not available here, so treat the defaults as reasonable for scans but unverified for photos and for the current pipeline. On the two test photos, TEBLID beat BRISK descriptors on the same keypoints (73–74% vs 66% of matches correct; Bernstein 3 Dice 0.476/0.462 vs 0.442/0.430), though the margins, in bits, were not retuned for either.
+
 ## Regularization strength is a placeholder
 
 Every transform uses `reg = 0.005`. The penalty measures distance from the nearest similarity, and at that strength it barely affects which hypothesis wins. A sweep on the two pages suggested the models want different strengths:

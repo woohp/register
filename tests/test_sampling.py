@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from register.utils.sampling import get_random_samples
+from register.sampling import get_random_samples
 
 
 def test_get_random_samples_rejects_too_many_items() -> None:
